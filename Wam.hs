@@ -15,6 +15,9 @@ data Cmd = Assertion Clause | Query [Term]
 
 data Cell = REF Int | STR Int | FUNCTOR Func
 
+-- Heap has an array and its current index (H)
+type Heap = ((IO (IOArray (Int, Int) Cell)), Int)
+
 instance Show Term where
     show (V (v, n))  = v++(show n)
     show (C c)       = c
