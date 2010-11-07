@@ -84,9 +84,9 @@ elimDupe terms s = Just s
 e2m :: Either ParseError a -> Maybe a
 e2m = either (\x -> Nothing) (\x -> Just x)
 
-p :: String -> Maybe Term 
-p  i = e2m (parse textTerm "" i)
-p' i = (V "fail") `fromMaybe` p i
+p' :: String -> Maybe Term 
+p' i = e2m (parse textTerm "" i)
+p  i = (V "fail") `fromMaybe` p' i
 
 textTerm = try textStructure <|> try textVar <|> try textConst
 textStructure = do
@@ -114,5 +114,5 @@ textVar =
        rest  <- many numOrLetter <|> (string "")
        return (V (first:rest))
        
-testTerm = p'"f(X, g(X, a), X)"
+testTerm = p"f(X, g(X, a), X)"
        
