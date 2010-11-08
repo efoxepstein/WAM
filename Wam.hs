@@ -52,12 +52,14 @@ setVariable (heap, h) = (((heap // [(h, REF h)]), h+1), h)
 setValue :: Heap -> Cell -> Heap
 setValue (heap, h) val = (heap // [(h, val)], h+1)
 
--- > referentiate $ p'"f(X, g(X, a), X)"
--- f/3(1, 2, 1), X, g/2(1, 3), a/0
 
-referentiate :: Term -> [RefTerm]
-referentiate t = map (refTerm flat) flat
-                 where flat = flattenTerm t
+-- We still need flattenQueryTerm
+
+flattenProgramTerm :: Term -> [RefTerm]
+flattenProgramTerm = referentiate . flattenTerm
+    
+referentiate :: [Term] -> [RefTerm]
+referentiate ts = map (refTerm ts) ts
 
 refTerm :: [Term] -> Term -> RefTerm
 refTerm ts (V v) = RefV v
@@ -67,18 +69,13 @@ flattenTerm :: Term -> [Term]
 flattenTerm t = elimDupes $ flattenHelper t
 
 flattenHelper :: Term -> [Term]
-flattenHelper (V v)                    = [V v]
-flattenHelper s@(S ((n, a), subterms)) = [s] ++ concatMap flattenHelper subterms
+flattenHelper v@(V _)             = [v]
+flattenHelper s@(S (_, subterms)) = [s] ++ concatMap flattenHelper subterms
 
 elimDupes :: [Term] -> [Term]
-elimDupes terms = mapMaybe (\x -> elimDupe (init x) (last x)) (tail $ inits terms)
-
-elimDupe :: [Term] -> Term -> Maybe Term
-elimDupe terms v@(V _) | elemIndex v terms == Nothing = Just v
-                       | otherwise                    = Nothing
-elimDupe terms s = Just s
-
-
+elimDupes = nubBy sameVar
+            where sameVar (V u) (V v) = u == v
+                  sameVar _ _         = False
 
 ------- PARSING --------
 e2m :: Either ParseError a -> Maybe a
