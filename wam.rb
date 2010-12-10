@@ -33,6 +33,12 @@ class WAM
     end
   end
   
+  def deref(x)
+    case x
+      when 
+    
+  end
+  
   def get_structure(reg)
     puts "get_structure #{reg}"
   end
@@ -45,6 +51,8 @@ class WAM
     puts "unify_value #{reg}"
   end
 end
+
+class Ref < String ; end
 
 EnvFrame = Struct.new(:ce, :cp, :vars)
 ChoiceFrame = Struct.new(:n, :args, :ce, :cp, :b, :bp, :tr, :h, :b0)
@@ -113,7 +121,7 @@ module Registers
         when Str
           args = p.args.map{|x| flatten_term x}
           ([p.clone] + args).flatten.uniq
-        else          raise "Invalid term: #{p}"
+        else raise "Invalid term: #{p}"
       end
     end
   
@@ -124,3 +132,10 @@ end
 GOOD_TERM = Str.new('f', ['x', Str.new('g',['x']), 'x'])
 
 ADD_FACT = Str['add', [Str['o'], Str['s', [Str['o']]], Str['s', [Str['o']]]]]
+
+def test
+  w = WAM.new
+  regs = Registers.flatten_program_term ADD_FACT
+  w.compile_from_registers regs
+end
+
