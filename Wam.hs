@@ -11,7 +11,7 @@ type Struct = (Func, [Term])
 type Var    = String
 
 -- TODO: make right case
-data Address = HEAP Int | CODE Int | REGISTER Int deriving (Eq) 
+data Address = HEAP Int | CODE Int | REGISTER Int deriving (Eq, Show) 
 
 data Term   = V Var | S Struct               deriving (Eq)
 data RefTerm = RefV Var | RefS (Func, [Int]) deriving (Eq)
@@ -22,8 +22,15 @@ data Cell = REF Address | STR Address | FUN Func | NULL deriving (Eq)
 -- Heap has an array and its current index (H)
 type Heap = ((Array Int Cell), Int)
 
+data Mode = READ | WRITE deriving (Show, Eq)
+
 -- The real heap, the code heap, the registers
-type Db = Db {heap :: Heap, code :: Heap, regs :: Heap}
+data Db = Db { heap :: Heap
+             , code :: Heap
+             , regs :: Heap
+             , mode :: Mode
+             ,    s :: Address
+             } deriving (Show)
 
 instance Show Term where
     show (V v)           = v
@@ -45,67 +52,109 @@ instance Show Cell where
     show (FUN f) = "FUN " ++ (show f)
     show NULL    = "NULL"
 
-getHeap :: Int -> Heap
-getHeap size = (array (1, size) (map (\x -> (x, REF x)) [1..size]), 1)
+getHeap :: Address -> Int -> Heap
+getHeap addr size =
+    let arr      = array (1, size) (map (\x -> (x, REF addr)) [1..size])
+        (ads, _) = foldl helper ([], addr) [1..size]
+    in  (arr // ads, 1)
+    where helper (ar, ad) i = ((i, REF ad):ar, incrAddr ad)
 
 getDb :: Db
-getStore = Db { heap = getHeap 512
-              , code = getHeap 512
-              , regs = getHeap 512 }
+getDb = Db { heap = (getHeap (HEAP 1) 10)
+           , code = (getHeap (CODE 1) 10)
+           , regs = (getHeap (REGISTER 1) 10)
+           , mode = WRITE
+           ,    s = (CODE 1) }
 
 getCell :: Db -> Address -> Cell
 getCell db (HEAP idx)     = (fst $ heap db) ! idx
 getCell db (CODE idx)     = (fst $ code db) ! idx
 getCell db (REGISTER idx) = (fst $ regs db) ! idx
 
+putCell :: Db -> Address -> Cell -> Db
+putCell db@(Db {heap=(h', h)}) (HEAP i) cell     = db {heap=(h' // [(i, cell)], h)} 
+putCell db@(Db {code=(h', h)}) (CODE i) cell     = db {code=(h' // [(i, cell)], h)} 
+putCell db@(Db {regs=(h', h)}) (REGISTER i) cell = db {regs=(h' // [(i, cell)], h)} 
+
 cellAddr :: Cell -> Address
 cellAddr (REF x) = x
 cellAddr (STR x) = x
-cellAddr _       = HEAP -1 -- This kinda makes no sense
+cellAddr _       = (HEAP 0) -- This kinda makes no sense
+
+incrAddr :: Address -> Address
+incrAddr (HEAP i)     = HEAP (i+1)
+incrAddr (CODE i)     = CODE (i+1)
+incrAddr (REGISTER i) = REGISTER (i+1)
 
 -- Put a term into the registers 
-termToCodeArea :: Db -> Term -> Store
+termToCodeArea :: Db -> Term -> Db
 termToCodeArea db term =
-        foldl compileRefTerm (db, []) (flattenProgramTerm term)
+        fst $ foldl compileRefTerm (db, []) (flattenProgramTerm term)
 
 -- DO all you can, and more. Strive for five, baby.
 compileRefTerm :: (Db, [Int]) -> RefTerm -> (Db, [Int])
-compileRefTerm (db, idxs) (RefS (f, is)) = (getStructure db f)
-compileRefTerm x _                       = x
+compileRefTerm (db, idxs) (RefS (f, is)) =
+    let db' = getStructure db f
+    in  foldl unifyVarVal (db, idxs) is
+    
+compileRefTerm x _ = x
+
+unifyVarVal :: (Db, [Int]) -> Int -> (Db, [Int])
+unifyVarVal (db, idxs) idx | elem idx idxs = (unifyValue db idx, idxs)
+                           | otherwise     = (unifyVariable db idx, idx:idxs)
+                           
+unifyValue :: Db -> Int -> Db
+unifyValue db@(Db {mode=READ}) i        = unify db (REGISTER i) (s db)
+unifyValue db@(Db {code=code', s=s'}) i = 
+    let code'' = pushOnHeap code' (REF (REGISTER i))
+    in  db {code = code'', s = incrAddr s' }
+
+unifyVariable :: Db -> Int -> Db
+unifyVariable db@(Db {mode=READ, s=s}) i =
+    let cell = getCell db s
+        db'  = putCell db (REGISTER i) cell
+    in  db' { s = (incrAddr s) }
+    
+unifyVariable db@(Db {code=code, s=s, regs=regs}) i =
+    let h     = snd code
+        db1   = db { code = pushOnHeap code (REF (CODE h)) }
+        db2   = db { regs = pushOnHeap regs (REF (CODE h)) }
+    in db2 { s = (incrAddr s) }
 
 getStructure :: Db -> Func -> Db
 getStructure db f = 
     getStructure' db f $ getCell db $ deref db (REGISTER (snd $ regs db))
     
 getStructure' :: Db -> Func -> Cell -> Db
-getStructure' db f cell =
-    let
-        code'  = pushOnHeap (code db)  (STR (i+1))
-        code'' = pushOnHeap code' (FUN f)
+getStructure' db@(Db {code=code}) f (REF addr) =
+    let code1 = pushOnHeap code  (STR (CODE (snd code)))
+        code2 = pushOnHeap code1 (FUN f)
         -- We ought to bind here
-    in
-        
+    in  db {mode = WRITE, code = code2}
+
+unify :: Db -> Address -> Address -> Db
+unify db _ _ = db
 
 pushOnHeap :: Heap -> Cell -> Heap
 pushOnHeap (heap, idx) cell = (heap // [(idx, cell)], idx + 1)
     
 -- Convert a list of RefTerms to Cells
-refsToCells :: [RefTerm] -> [Cell]
-refsToCells refs = map refToCell
+--refsToCells :: [RefTerm] -> [Cell]
+--refsToCells refs = map refToCell
 
-deref :: Store -> Address -> Address
-deref store adr@(loc, idx) | REF idx /= cell = deref store (loc, cellAddr cell)
-                           | otherwise       = adr
-                           where cell = getCell store adr
+deref :: Db -> Address -> Address
+deref db adr | cellAddr cell /= adr  = deref db (cellAddr cell)
+             | otherwise             = adr
+             where cell = getCell db adr
 
-putStructure :: Heap -> Func -> (Heap, Int)
-putStructure (heap, h) fnc = ((heap//[(h, STR (h+1)), (h+1, (FUN fnc))], h+2), h)
-
-setVariable :: Heap -> (Heap, Int)
-setVariable (heap, h) = (((heap // [(h, REF h)]), h+1), h)
-
-setValue :: Heap -> Cell -> Heap
-setValue (heap, h) val = (heap // [(h, val)], h+1)
+-- putStructure :: Heap -> Func -> (Heap, Int)
+-- putStructure (heap, h) fnc = ((heap//[(h, STR (h+1)), (h+1, (FUN fnc))], h+2), h)
+-- 
+-- setVariable :: Heap -> (Heap, Int)
+-- setVariable (heap, h) = (((heap // [(h, REF h)]), h+1), h)
+-- 
+-- setValue :: Heap -> Cell -> Heap
+-- setValue (heap, h) val = (heap // [(h, val)], h+1)
 
 
 -- We still need flattenQueryTerm
