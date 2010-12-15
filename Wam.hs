@@ -1,5 +1,6 @@
 module Main where
     
+import Debug.Trace
 import Data.Maybe
 import Data.List
 --import Data.Array.IO
@@ -11,7 +12,7 @@ type Struct = (Func, [Term])
 type Var    = String
 
 -- TODO: make right case
-data Address = HEAP Int | CODE Int | REGISTER Int deriving (Eq, Show) 
+data Address = HEAP Int | CODE Int | REGS Int deriving (Eq, Show) 
 
 data Term   = V Var | S Struct               deriving (Eq)
 data RefTerm = RefV Var | RefS (Func, [Int]) deriving (Eq)
@@ -62,19 +63,19 @@ getHeap addr size =
 getDb :: Db
 getDb = Db { heap = (getHeap (HEAP 0) 10)
            , code = (getHeap (CODE 0) 10)
-           , regs = (getHeap (REGISTER 0) 10)
+           , regs = (getHeap (REGS 0) 10)
            , mode = WRITE
            ,    s = (CODE 0) }
 
 getCell :: Db -> Address -> Cell
-getCell db (HEAP idx)     = (fst $ heap db) ! idx
-getCell db (CODE idx)     = (fst $ code db) ! idx
-getCell db (REGISTER idx) = (fst $ regs db) ! idx
+getCell db (HEAP idx) = (fst $ heap db) ! idx
+getCell db (CODE idx) = (fst $ code db) ! idx
+getCell db (REGS idx) = (fst $ regs db) ! idx
 
 putCell :: Db -> Address -> Cell -> Db
-putCell db@(Db {heap=(h', h)}) (HEAP i) cell     = db {heap=(h' // [(i, cell)], h)} 
-putCell db@(Db {code=(h', h)}) (CODE i) cell     = db {code=(h' // [(i, cell)], h)} 
-putCell db@(Db {regs=(h', h)}) (REGISTER i) cell = db {regs=(h' // [(i, cell)], h)} 
+putCell db@(Db {heap=(h', h)}) (HEAP i) cell = db {heap=(h' // [(i, cell)], h)} 
+putCell db@(Db {code=(h', h)}) (CODE i) cell = db {code=(h' // [(i, cell)], h)} 
+putCell db@(Db {regs=(h', h)}) (REGS i) cell = db {regs=(h' // [(i, cell)], h)} 
 
 cellAddr :: Cell -> Address
 cellAddr (REF x) = x
@@ -82,56 +83,66 @@ cellAddr (STR x) = x
 cellAddr _       = (HEAP 999999) -- This kinda makes no sense
 
 incrAddr :: Address -> Address
-incrAddr (HEAP i)     = HEAP (i+1)
-incrAddr (CODE i)     = CODE (i+1)
-incrAddr (REGISTER i) = REGISTER (i+1)
+incrAddr (HEAP i) = HEAP (i+1)
+incrAddr (CODE i) = CODE (i+1)
+incrAddr (REGS i) = REGS (i+1)
 
 -- Put a term into the registers 
 termToCodeArea :: Db -> Term -> Db
 termToCodeArea db term =
-        fst $ foldl compileRefTerm (db, []) (flattenProgramTerm term)
+    fst $ foldl compileRefTerm (db, []) (flattenProgramTerm term)
 
 -- DO all you can, and more. Strive for five, baby.
 compileRefTerm :: (Db, [Int]) -> RefTerm -> (Db, [Int])
+--compileRefTerm _ (RefS (f,is)) | trace ("compRefTerm\t" ++ (show f) ++ "\t" ++ (show is))  False = undefined
 compileRefTerm (db, idxs) (RefS (f, is)) =
-    let db' = getStructure db f
-    in  foldl unifyVarVal (db', idxs) is
+    let db'  = getStructure db f
+    in foldl unifyVarVal (db', idxs) is
     
 compileRefTerm x _ = x
 
 unifyVarVal :: (Db, [Int]) -> Int -> (Db, [Int])
+--unifyVarVal (_, idxs) i | trace ("uVV: " ++ show idxs ++ "\t" ++ show i) False = undefined
 unifyVarVal (db, idxs) idx | elem idx idxs = (unifyValue db idx, idxs)
-                           | otherwise     = (unifyVariable db idx, idx:idxs)
+                           | otherwise     = (unifyVariable db idx, idx:idxs)         
                            
 unifyValue :: Db -> Int -> Db
-unifyValue db@(Db {mode=READ}) i      = unify db (REGISTER i) (s db)
+--unifyValue (Db {mode=x}) i | trace ("unifyValue: " ++ (show x)) False = undefined
+unifyValue db@(Db {mode=READ, s=s}) i = unify db (REGS i) s
 unifyValue db@(Db {code=code, s=s}) i = 
-    let cell  = getCell db (REGISTER i)
-        code' = pushOnHeap code cell
+    let code' = pushOnHeap code (REF (CODE i))
     in  db { code = code', s = incrAddr s }
 
 unifyVariable :: Db -> Int -> Db
+--unifyVariable _ i | trace ("unifyVariable:") False = undefined
 unifyVariable db@(Db {mode=READ, s=s}) i =
     let cell = getCell db s
-        db'  = putCell db (REGISTER i) cell
+        db'  = putCell db (REGS i) cell
     in  db' { s = (incrAddr s) }
     
 unifyVariable db@(Db {code=code, s=s, regs=regs}) i =
     let h   = snd code
         db1 = db  { code = pushOnHeap code (REF (CODE h)) }
-        db2 = db1 { regs = pushOnHeap regs (REF (CODE h)) }
+        db2 = putCell db1 (REGS i) (REF (CODE h))
     in db2 { s = (incrAddr s) }
 
 getStructure :: Db -> Func -> Db
-getStructure db f = 
-    getStructure' db f $ getCell db $ deref db (REGISTER (snd $ regs db))
+getStructure db f = getStructure' db f $ getCell db $ deref db (REGS (snd $ regs db))
     
 getStructure' :: Db -> Func -> Cell -> Db
+--getStructure' db f adr | trace ("getStruct'\t" ++ show adr) False = undefined
 getStructure' db@(Db {code=code}) f (REF addr) =
     let code1 = pushOnHeap code  (STR (CODE (1 + (snd code))))
         code2 = pushOnHeap code1 (FUN f)
-        -- We ought to bind here
-    in  db {mode = WRITE, code = code2}
+        db' = db {mode = WRITE, code = code2}
+    in  bind db' addr (CODE ((snd code2) - 2)) 
+getStructure' db@(Db {code=code}) f (STR addr) 
+    | trace (show cell) False = undefined
+    | isFun cell = db { s = incrAddr addr, mode = READ } 
+    where cell = getCell db addr
+    
+    -- ^ we should set fail to be true here if things don't pattern match
+    -- but we don't because we don't know what fail is in L0
 
 unify :: Db -> Address -> Address -> Db
 unify db _ _ = db
@@ -140,18 +151,56 @@ pushOnHeap :: Heap -> Cell -> Heap
 pushOnHeap (heap, idx) cell = (heap // [(idx, cell)], idx + 1)
 
 deref :: Db -> Address -> Address
-deref db adr | cellAddr cell /= adr  = deref db (cellAddr cell)
-             | otherwise             = adr
-             where cell = getCell db adr
+--deref db adr | trace ("deref\t" ++ show adr) False = undefined
+deref db adr | isSelfRef db cell = adr
+             | isRef cell        = deref db $ (\(REF x) -> x) cell
+             | otherwise         = adr
+             where cell = trace (show db) (getCell db adr)
+
+isFun :: Cell -> Bool
+isFun (FUN _) = True
+isFun _       = False
+
+isSelfRef :: Db -> Cell -> Bool
+isSelfRef db (REF x) | (REF x) == getCell db x = True
+isSelfRef _ _                                  = False
+
+unRef :: Db -> Cell -> Address
+unRef db (REF x) = x
              
 bind :: Db -> Address -> Address -> Db
+--bind db a1 a2 | trace (show a1 ++ "\n" ++ show a2) False = undefined
 bind db a1 a2 =
     let cell1 = getCell db a1
         cell2 = getCell db a2
     in bindHelper db (cell1, a1) (cell2, a2)
 
+isRef :: Cell -> Bool
+isRef (REF _) = True
+isRef _       = False
+
+addrLt :: Address -> Address -> Bool
+addrLt (CODE a) (CODE b)         = a < b
+addrLt (CODE _) _                = True
+addrLt (REGS a) (REGS b) = a < b
+addrLt _ _                       = False
+
 bindHelper :: Db -> (Cell, Address) -> (Cell, Address) -> Db
-bindHelper db (REF )
+bindHelper db (REF addr, a1) (cell2, a2)
+--    | trace (show addr ++ "\t" ++ show cell2) False = undefined
+    | (not $ isRef cell2) || (a2 `addrLt` a1) = 
+        let db' = putCell db a1 cell2
+        in  trail db' a1
+    | otherwise =
+        let db' = putCell db a2 (REF addr)
+        in  trail db' a2
+bindHelper db (cell, _) (_, a2) =
+    let db' = putCell db a2 cell
+    in  trail db' a2
+        
+trail :: Db -> Address -> Db
+--trail db _ | trace (show (regs db)) False = undefined
+trail db _ = db
 
 
 
@@ -224,7 +273,9 @@ textVar =
        
 testTerm = p "add(o, X, X)"
 getCode = elems . fst . code
+getRegs = elems . fst . regs
 
 
 testQuery = p "add(o, o, o)"
 test = getCode $ termToCodeArea getDb testTerm
+testRegs = getRegs $ termToCodeArea getDb testTerm
