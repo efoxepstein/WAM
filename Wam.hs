@@ -94,7 +94,6 @@ termToCodeArea db term =
 
 -- DO all you can, and more. Strive for five, baby.
 compileRefTerm :: (Db, [Int]) -> RefTerm -> (Db, [Int])
---compileRefTerm _ (RefS (f,is)) | trace ("compRefTerm\t" ++ (show f) ++ "\t" ++ (show is))  False = undefined
 compileRefTerm (db, idxs) (RefS (f, is)) =
     let db'  = getStructure db f
     in foldl unifyVarVal (db', idxs) is
@@ -102,19 +101,16 @@ compileRefTerm (db, idxs) (RefS (f, is)) =
 compileRefTerm x _ = x
 
 unifyVarVal :: (Db, [Int]) -> Int -> (Db, [Int])
---unifyVarVal (_, idxs) i | trace ("uVV: " ++ show idxs ++ "\t" ++ show i) False = undefined
 unifyVarVal (db, idxs) idx | elem idx idxs = (unifyValue db idx, idxs)
                            | otherwise     = (unifyVariable db idx, idx:idxs)         
                            
 unifyValue :: Db -> Int -> Db
---unifyValue (Db {mode=x}) i | trace ("unifyValue: " ++ (show x)) False = undefined
 unifyValue db@(Db {mode=READ, s=s}) i = unify db (REGS i) s
 unifyValue db@(Db {code=code, s=s}) i = 
     let code' = pushOnHeap code (REF (CODE i))
     in  db { code = code', s = incrAddr s }
 
 unifyVariable :: Db -> Int -> Db
---unifyVariable _ i | trace ("unifyVariable:") False = undefined
 unifyVariable db@(Db {mode=READ, s=s}) i =
     let cell = getCell db s
         db'  = putCell db (REGS i) cell
@@ -123,7 +119,7 @@ unifyVariable db@(Db {mode=READ, s=s}) i =
 unifyVariable db@(Db {code=code, s=s, regs=regs}) i =
     let h   = snd code
         db1 = db  { code = pushOnHeap code (REF (CODE h)) }
-        db2 = putCell db1 (REGS i) (REF (CODE h))
+        db2 = db1 { regs = pushOnHeap regs (REF (CODE h)) }
     in db2 { s = (incrAddr s) }
 
 getStructure :: Db -> Func -> Db
@@ -131,13 +127,14 @@ getStructure db f = getStructure' db f $ getCell db $ deref db (REGS (snd $ regs
     
 getStructure' :: Db -> Func -> Cell -> Db
 --getStructure' db f adr | trace ("getStruct'\t" ++ show adr) False = undefined
-getStructure' db@(Db {code=code}) f (REF addr) =
+getStructure' db@(Db {code=code, regs=(r,i)}) f (REF addr) =
     let code1 = pushOnHeap code  (STR (CODE (1 + (snd code))))
         code2 = pushOnHeap code1 (FUN f)
-        db' = db {mode = WRITE, code = code2}
-    in  bind db' addr (CODE ((snd code2) - 2)) 
+        db1 = db  {mode = WRITE, code = code2}
+        db2 = db1 {regs = (r,i+1) }
+    in  bind db2 addr (CODE ((snd code2) - 2)) 
 getStructure' db@(Db {code=code}) f (STR addr) 
-    | trace (show cell) False = undefined
+    -- | trace (show cell) False = undefined
     | isFun cell = db { s = incrAddr addr, mode = READ } 
     where cell = getCell db addr
     
@@ -155,7 +152,7 @@ deref :: Db -> Address -> Address
 deref db adr | isSelfRef db cell = adr
              | isRef cell        = deref db $ (\(REF x) -> x) cell
              | otherwise         = adr
-             where cell = trace (show db) (getCell db adr)
+             where cell = getCell db adr
 
 isFun :: Cell -> Bool
 isFun (FUN _) = True
