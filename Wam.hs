@@ -61,9 +61,9 @@ getHeap addr size =
     where helper (ar, ad) i = ((i, REF ad):ar, incrAddr ad)
 
 getDb :: Db
-getDb = Db { heap = (getHeap (HEAP 0) 10)
-           , code = (getHeap (CODE 0) 10)
-           , regs = (getHeap (REGS 0) 10)
+getDb = Db { heap = (getHeap (HEAP 0) 20)
+           , code = (getHeap (CODE 0) 20)
+           , regs = (getHeap (REGS 0) 20)
            , mode = WRITE
            ,    s = (CODE 0) }
 
@@ -80,19 +80,43 @@ putCell db@(Db {regs=(h', h)}) (REGS i) cell = db {regs=(h' // [(i, cell)], h)}
 cellAddr :: Cell -> Address
 cellAddr (REF x) = x
 cellAddr (STR x) = x
-cellAddr _       = (HEAP 999999) -- This kinda makes no sense
+cellAddr _       = (HEAP 999999)
 
 incrAddr :: Address -> Address
 incrAddr (HEAP i) = HEAP (i+1)
 incrAddr (CODE i) = CODE (i+1)
 incrAddr (REGS i) = REGS (i+1)
 
--- Put a term into the registers 
-termToCodeArea :: Db -> Term -> Db
-termToCodeArea db term =
-    fst $ foldl compileRefTerm (db, []) (flattenProgramTerm term)
+-- compileQueryTerm :: Db -> Term -> Db
+-- compileQueryTerm db = compileQueryRefs db . reorder . flattenTerm
+-- 
+-- reorder :: [RefTerm] -> [(Int, RefTerm)]
+-- reorder ts = fst $ takeWhile (not.null.snd) $ iterate takeGood ([], zip [0..] ts)
 
--- DO all you can, and more. Strive for five, baby.
+-- 
+-- takeGood :: ([(Int, RefTerm)], [(Int, RefTerm)]) -> ([(Int, RefTerm)], [(Int, RefTerm)])
+-- takeGood (g, b) = partition (flip elem g) b
+-- 
+-- compileQueryRefs :: Db -> [(Int, RefTerm)] -> Db
+-- compileQueryRefs db ((_, RefV _) : ts) = compileQueryRefs db ts
+-- compileQueryRefs db ((i, RefS s) : ts) = 
+--     compileQueryRefs (putStructure db s (REGS i)) ts
+
+putStructure :: Db -> (Func, [Int]) -> Address -> Db
+putStructure db@(Db {code=code, regs=regs}) (f, args) addr =
+    let h     = 1 + (snd code)
+        code1 = pushOnHeap code  (STR (CODE h))
+        code2 = pushOnHeap code1 (FUN f)
+        db1   = putCell db addr (STR (CODE h))
+--        db2   = do stuff to args
+    in  db1 { code = code2 }
+        
+
+compileProgramTerm :: Db -> Term -> Db
+compileProgramTerm db term =
+    fst $ foldl compileRefTerm (db, []) (flattenTerm term)
+
+-- This has some other responsibilities that it's not doing yet
 compileRefTerm :: (Db, [Int]) -> RefTerm -> (Db, [Int])
 compileRefTerm (db, idxs) (RefS (f, is)) =
     let db'  = getStructure db f
@@ -105,12 +129,14 @@ unifyVarVal (db, idxs) idx | elem idx idxs = (unifyValue db idx, idxs)
                            | otherwise     = (unifyVariable db idx, idx:idxs)         
                            
 unifyValue :: Db -> Int -> Db
+unifyValue _ _ | trace ("unifyValue") False = undefined
 unifyValue db@(Db {mode=READ, s=s}) i = unify db (REGS i) s
 unifyValue db@(Db {code=code, s=s}) i = 
     let code' = pushOnHeap code (REF (CODE i))
     in  db { code = code', s = incrAddr s }
 
 unifyVariable :: Db -> Int -> Db
+unifyVariable _ _ | trace ("unifyVariable") False = undefined
 unifyVariable db@(Db {mode=READ, s=s}) i =
     let cell = getCell db s
         db'  = putCell db (REGS i) cell
@@ -126,7 +152,7 @@ getStructure :: Db -> Func -> Db
 getStructure db f = getStructure' db f $ getCell db $ deref db (REGS (snd $ regs db))
     
 getStructure' :: Db -> Func -> Cell -> Db
---getStructure' db f adr | trace ("getStruct'\t" ++ show adr) False = undefined
+getStructure' _ _ _ | trace ("getStructure'") False = undefined
 getStructure' db@(Db {code=code, regs=(r,i)}) f (REF addr) =
     let code1 = pushOnHeap code  (STR (CODE (1 + (snd code))))
         code2 = pushOnHeap code1 (FUN f)
@@ -199,30 +225,15 @@ trail :: Db -> Address -> Db
 --trail db _ | trace (show (regs db)) False = undefined
 trail db _ = db
 
-
-
-
--- flattenQueryTerm :: Term -> [RefTerm]
--- flattenQueryTerm term = flattenQueryHelper [] term
--- 
--- flattenQueryHelper :: [RefTerm] -> Term -> [RefTerm]
--- flattenQueryHelper ts (V v) | elem (RefV v) ts = ts
---                             | otherwise        = 
-
---referentiateQuery :: [Term] -> [RefTerm]
-
-flattenProgramTerm :: Term -> [RefTerm]
-flattenProgramTerm = referentiateProg . flattenTerm
+flattenTerm :: Term -> [RefTerm]
+flattenTerm t = referentiate $ elimDupes $ flattenHelper [t]
     
-referentiateProg :: [Term] -> [RefTerm]
-referentiateProg ts = map (refTerm ts) ts
+referentiate :: [Term] -> [RefTerm]
+referentiate ts = map (refTerm ts) ts
 
 refTerm :: [Term] -> Term -> RefTerm
-refTerm ts (V v) = RefV v
-refTerm ts (S (f, subs)) = (RefS (f, mapMaybe (\x->elemIndex x ts) subs))
-
-flattenTerm :: Term -> [Term]
-flattenTerm t = elimDupes $ flattenHelper [t]
+refTerm ts (V v)         = RefV v
+refTerm ts (S (f, subs)) = RefS (f, mapMaybe (\x->elemIndex x ts) subs)
 
 flattenHelper :: [Term] -> [Term]
 flattenHelper []                        = []
@@ -236,11 +247,14 @@ elimDupes = nubBy sameVar
 
 ------- PARSING --------
 e2m :: Either ParseError a -> Maybe a
-e2m = either (\x -> Nothing) (\x -> Just x)
+e2m = either (\_ -> Nothing) (\x -> Just x)
 
 p' :: String -> Maybe Term 
 p' i = e2m (parse textTerm "" i)
 p  i = (V "fail") `fromMaybe` p' i
+
+h :: String -> Clause
+h i = ((("fail",0), []) :- []) `fromMaybe` (e2m $ parse textHorn "" i)
 
 textTerm = try textStructure <|> try textVar <|> try textConst
 textStructure = do
@@ -268,11 +282,18 @@ textVar =
        rest  <- many numOrLetter <|> (string "")
        return (V (first:rest))
        
+textHorn =
+    do hed   <- textStruct
+       sepr  <- spaces >> (string ":-") >> spaces
+       tale  <- textStructure `sepBy` (spaces >> (char ',') >> spaces)
+       return (hed :- tale)
+       
 testTerm = p "add(o, X, X)"
+testTerm2 = p "p(f(X), h(Y, f(a)), Y)"
+testQuery = p "p(Z, h(Z, W), f(W))"
+
 getCode = elems . fst . code
 getRegs = elems . fst . regs
 
-
-testQuery = p "add(o, o, o)"
-test = getCode $ termToCodeArea getDb testTerm
-testRegs = getRegs $ termToCodeArea getDb testTerm
+test = getCode $ compileProgramTerm getDb testQuery
+testRegs = getRegs $ compileProgramTerm getDb testQuery
