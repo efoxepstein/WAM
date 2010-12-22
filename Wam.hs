@@ -87,28 +87,58 @@ incrAddr (HEAP i) = HEAP (i+1)
 incrAddr (CODE i) = CODE (i+1)
 incrAddr (REGS i) = REGS (i+1)
 
--- compileQueryTerm :: Db -> Term -> Db
--- compileQueryTerm db = compileQueryRefs db . reorder . flattenTerm
--- 
--- reorder :: [RefTerm] -> [(Int, RefTerm)]
--- reorder ts = fst $ takeWhile (not.null.snd) $ iterate takeGood ([], zip [0..] ts)
 
--- 
--- takeGood :: ([(Int, RefTerm)], [(Int, RefTerm)]) -> ([(Int, RefTerm)], [(Int, RefTerm)])
--- takeGood (g, b) = partition (flip elem g) b
--- 
--- compileQueryRefs :: Db -> [(Int, RefTerm)] -> Db
--- compileQueryRefs db ((_, RefV _) : ts) = compileQueryRefs db ts
--- compileQueryRefs db ((i, RefS s) : ts) = 
---     compileQueryRefs (putStructure db s (REGS i)) ts
+
+compileQueryTerm :: Db -> Term -> Db
+compileQueryTerm db = fst . compileQueryRefs (db, []) . reorder . flattenTerm
+
+reorder :: [RefTerm] -> [(Int, RefTerm)]
+reorder ts = filter (isRefS . snd ) $ fixOrder $ zip [0..] ts
+
+isRefS :: RefTerm -> Bool
+isRefS (RefS _) = True
+isRefS (RefV _) = False
+
+fixOrder :: [(Int, RefTerm)] -> [(Int, RefTerm)]
+fixOrder []                           = []
+fixOrder (v@(_, RefV _) : ts)         = v : fixOrder ts
+fixOrder (s@(_, RefS (_, idxs)) : ts) = (fixOrder front) ++ [s] ++ (fixOrder back)
+                                      where (front, back) = pullToFront ts idxs
+
+pullToFront :: [(Int,RefTerm)] -> [Int] -> ([(Int,RefTerm)],[(Int,RefTerm)])
+pullToFront x []    = ([],x)
+pullToFront ts idxs = partition (\(x,_) -> elem x idxs) ts
+
+compileQueryRefs :: (Db, [Int]) -> [(Int, RefTerm)] -> (Db, [Int])
+--compileQueryRefs (db, i) _ | trace ("compileQueryRefs: " ++ show i ++ (take 1 (show db))) False = undefined
+compileQueryRefs db []                 = db
+compileQueryRefs db ((_, RefV _) : ts) = compileQueryRefs db ts
+compileQueryRefs (db, is) ((i, RefS s@(f, args)) : ts) = 
+    let db1 = putStructure db s (REGS i)
+        db2 = foldl setVarVal (db1, i : is) args
+    in compileQueryRefs db2 ts
+    
+setVarVal :: (Db, [Int]) -> Int -> (Db, [Int])
+-- setVarVal (_, i) j | trace ("setVarVal " ++ (show i) ++ ": " ++ show j) False = undefined
+setVarVal (db, is) i | elem i is = (setValue db i, is)
+                     | otherwise = (setVariable db i, i : is)
+                     
+setValue :: Db -> Int -> Db
+setValue db i | trace ("setValue " ++ (show i)) False = undefined
+setValue x _ = x
+
+setVariable :: Db -> Int -> Db
+setVariable db i | trace ("setVariable " ++ (show i)) False = undefined
+setVariable x _ = x
+
 
 putStructure :: Db -> (Func, [Int]) -> Address -> Db
+putStructure _ (f,_) _ | trace ("putStructure " ++ (show f)) False = undefined
 putStructure db@(Db {code=code, regs=regs}) (f, args) addr =
     let h     = 1 + (snd code)
         code1 = pushOnHeap code  (STR (CODE h))
         code2 = pushOnHeap code1 (FUN f)
         db1   = putCell db addr (STR (CODE h))
---        db2   = do stuff to args
     in  db1 { code = code2 }
         
 
@@ -295,5 +325,5 @@ testQuery = p "p(Z, h(Z, W), f(W))"
 getCode = elems . fst . code
 getRegs = elems . fst . regs
 
-test = getCode $ compileProgramTerm getDb testQuery
-testRegs = getRegs $ compileProgramTerm getDb testQuery
+test     = getCode $ compileQueryTerm getDb testQuery
+testRegs = getRegs $ compileQueryTerm getDb testQuery
