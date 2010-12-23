@@ -7,18 +7,36 @@ import Data.List
 import Data.Array.IArray
 import Text.ParserCombinators.Parsec
 
+-- A functor is a string and an arity. Technically, a functor is an identifier
+-- with an arity, but for the sake of this Prolog implementation, there is no
+-- strict need to use the type system to guarantee this.
 type Func   = (String, Int)
+
+-- A Struct is a functor with its arguments. The type system does not promise
+-- that the number of arguments is the same as the arity.
 type Struct = (Func, [Term])
+
+-- A Variable is any string. Technically, it should be a capital letter, but this
+-- is not enforced within the type system.
 type Var    = String
 
--- TODO: make right case
+-- An address is the index in either the HEAP, CODE, or REGS heaps
 data Address = HEAP Int | CODE Int | REGS Int deriving (Eq, Show) 
 
+-- A Term is a variable or a struct
 data Term   = V Var | S Struct               deriving (Eq)
+
+-- RefTerms are used in query compilation.
 data RefTerm = RefV Var | RefS (Func, [Int]) deriving (Eq)
+
+-- A Clause is a struct followed by the conjunction of many terms
 data Clause = Struct :- [Term]               deriving (Eq)
+
+-- Not used yet
 data Cmd = Assertion Clause | Query [Term]
-data Cell = REF Address | STR Address | FUN Func | NULL deriving (Eq)
+
+-- An entry on the heap is a REF, STR, or FUN
+data Cell = REF Address | STR Address | FUN Func deriving (Eq)
 
 -- Heap has an array and its current index (H)
 type Heap = ((Array Int Cell), Int)
@@ -33,6 +51,7 @@ data Db = Db { heap :: Heap
              ,    s :: Address
              } deriving (Show)
 
+-- Display things prettily
 instance Show Term where
     show (V v)           = v
     show (S ((f,a), [])) = f
@@ -51,8 +70,9 @@ instance Show Cell where
     show (REF i) = "REF " ++ (show i)
     show (STR i) = "STR " ++ (show i)
     show (FUN f) = "FUN " ++ (show f)
-    show NULL    = "NULL"
     
+-- Returns a heap of a specific size defaulting to sequential addresses starting
+-- with the one passed in    
 getHeap :: Address -> Int -> Heap
 getHeap addr size =
     let arr      = array (0, size-1) (map (\x -> (x, REF addr)) [0..size-1])
@@ -60,6 +80,7 @@ getHeap addr size =
     in  (arr // ads, 0)
     where helper (ar, ad) i = ((i, REF ad):ar, incrAddr ad)
 
+-- Returns a new database
 getDb :: Db
 getDb = Db { heap = (getHeap (HEAP 0) 20)
            , code = (getHeap (CODE 0) 20)
@@ -67,6 +88,7 @@ getDb = Db { heap = (getHeap (HEAP 0) 20)
            , mode = WRITE
            ,    s = (CODE 0) }
 
+-- Convenience accessors for dealing with databases
 getCell :: Db -> Address -> Cell
 getCell db (HEAP idx) = (fst $ heap db) ! idx
 getCell db (CODE idx) = (fst $ code db) ! idx
@@ -86,7 +108,6 @@ incrAddr :: Address -> Address
 incrAddr (HEAP i) = HEAP (i+1)
 incrAddr (CODE i) = CODE (i+1)
 incrAddr (REGS i) = REGS (i+1)
-
 
 
 compileQueryTerm :: Db -> Term -> Db
