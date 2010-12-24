@@ -109,6 +109,9 @@ incrAddr (HEAP i) = HEAP (i+1)
 incrAddr (CODE i) = CODE (i+1)
 incrAddr (REGS i) = REGS (i+1)
 
+pushOnHeap :: Heap -> Cell -> Heap
+pushOnHeap (heap, idx) cell = (heap // [(idx, cell)], idx + 1)
+
 
 compileQueryTerm :: Db -> Term -> Db
 compileQueryTerm db = fst . compileQueryRefs (db, []) . reorder . flattenTerm
@@ -140,17 +143,21 @@ compileQueryRefs (db, is) ((i, RefS s@(f, args)) : ts) =
     in compileQueryRefs db2 ts
     
 setVarVal :: (Db, [Int]) -> Int -> (Db, [Int])
--- setVarVal (_, i) j | trace ("setVarVal " ++ (show i) ++ ": " ++ show j) False = undefined
-setVarVal (db, is) i | elem i is = (setValue db i, is)
-                     | otherwise = (setVariable db i, i : is)
+setVarVal (_, i) j | trace ("setVarVal " ++ (show i) ++ ": " ++ show j) False = undefined
+setVarVal (db, is) i | elem i is = (setValue db (getCell db (REGS i)), is)
+                     | otherwise = (setVariable db (deref db (REGS i)), i : is)
                      
-setValue :: Db -> Int -> Db
-setValue db i | trace ("setValue " ++ (show i)) False = undefined
-setValue x _ = x
+setValue :: Db -> Cell -> Db
+--setValue db i | trace ("setValue " ++ (show i)) False = undefined
+setValue db@(Db {code=code}) cell = db { code = pushOnHeap code cell }
 
-setVariable :: Db -> Int -> Db
-setVariable db i | trace ("setVariable " ++ (show i)) False = undefined
-setVariable x _ = x
+setVariable :: Db -> Address -> Db
+--setVariable db i | trace ("setVariable " ++ (show i)) False = undefined
+setVariable db@(Db {code=code, regs=regs}) addr =
+    let cell  = REF (CODE (snd code))
+        code2 = pushOnHeap code cell
+        db2 = putCell db addr cell
+    in db2 { code = code2 }
 
 
 putStructure :: Db -> (Func, [Int]) -> Address -> Db
@@ -220,9 +227,6 @@ getStructure' db@(Db {code=code}) f (STR addr)
 
 unify :: Db -> Address -> Address -> Db
 unify db _ _ = db
-
-pushOnHeap :: Heap -> Cell -> Heap
-pushOnHeap (heap, idx) cell = (heap // [(idx, cell)], idx + 1)
 
 deref :: Db -> Address -> Address
 --deref db adr | trace ("deref\t" ++ show adr) False = undefined
