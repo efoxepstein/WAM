@@ -143,7 +143,7 @@ compileQueryRefs (db, is) ((i, RefS s@(f, args)) : ts) =
     in compileQueryRefs db2 ts
     
 setVarVal :: (Db, [Int]) -> Int -> (Db, [Int])
-setVarVal (_, i) j | trace ("setVarVal " ++ (show i) ++ ": " ++ show j) False = undefined
+--setVarVal (_, i) j | trace ("setVarVal " ++ (show i) ++ ": " ++ show j) False = undefined
 setVarVal (db, is) i | elem i is = (setValue db (getCell db (REGS i)), is)
                      | otherwise = (setVariable db (deref db (REGS i)), i : is)
                      
@@ -188,7 +188,7 @@ unifyVarVal (db, idxs) idx | elem idx idxs = (unifyValue db idx, idxs)
                            
 unifyValue :: Db -> Int -> Db
 unifyValue _ _ | trace ("unifyValue") False = undefined
-unifyValue db@(Db {mode=READ, s=s}) i = unify db (REGS i) s
+unifyValue db@(Db {mode=READ, s=s}) i = db `fromMaybe` (unify db (REGS i) s)
 unifyValue db@(Db {code=code, s=s}) i = 
     let code' = pushOnHeap code (REF (CODE i))
     in  db { code = code', s = incrAddr s }
@@ -224,9 +224,6 @@ getStructure' db@(Db {code=code}) f (STR addr)
     
     -- ^ we should set fail to be true here if things don't pattern match
     -- but we don't because we don't know what fail is in L0
-
-unify :: Db -> Address -> Address -> Db
-unify db _ _ = db
 
 deref :: Db -> Address -> Address
 --deref db adr | trace ("deref\t" ++ show adr) False = undefined
@@ -299,6 +296,43 @@ elimDupes :: [Term] -> [Term]
 elimDupes = nubBy sameVar
             where sameVar (V u) (V v) = u == v
                   sameVar _ _         = False
+                  
+------- UNIFICATION ----
+unify :: Db -> Address -> Address -> Maybe Db
+unify db a1 a2 = unify' db [a2, a1] -- use list as a stack, TOS is head
+
+unify' :: Db -> [Address] -> Maybe Db
+unify' db (a1 : a2 : addrs) =
+    let d1            = deref db a1
+        d2            = deref db a2
+        (db2, addrs') = unifyTags db d1 d2
+    in  db2 >>= (\x -> unify' x (addrs' ++ addrs))
+unify' db _ = Just db
+    
+unifyTags :: Db -> Address -> Address -> (Maybe Db, [Address])
+unifyTags db a1 a2 | a1 == a2  = (Just db, [])
+                   | otherwise =
+    let c1 = getCell db a1
+        c2 = getCell db a2
+    in if (isRef c1) || (isRef c2)
+       then (Just (bind db a1 a2), [])
+       else unifyFunctors db (c1, a1) (c2, a2)
+
+unifyFunctors :: Db -> (Cell, Address) -> (Cell, Address) -> (Maybe Db, [Address])
+unifyFunctors db (REF a, aAddr) (REF b, bAddr) =
+    let a' = getCell db a
+        b' = getCell db b
+    in if a' == b'
+       then (Just db, takeCells db aAddr bAddr)
+       else (Nothing, [])
+
+takeCells :: Db -> Address -> Address -> [Address]
+takeCells db a1 a2 =
+    case (getCell db a1) of
+        (FUN (_, arity)) -> takeCells' db arity (incrAddr a1) (incrAddr a2)
+        _                -> []
+    where takeCells' _  0 _ _ = []
+          takeCells' db x a b = (b : a : takeCells' db (x-1) (incrAddr a) (incrAddr b))
 
 ------- PARSING --------
 e2m :: Either ParseError a -> Maybe a
