@@ -284,6 +284,8 @@ isSelfRef :: Db -> Cell -> Bool
 isSelfRef db (REF x) | (REF x) == getCell db x = True
 isSelfRef _ _                                  = False
 
+-- does 'bind' (TODO: expand on this explanation)
+-- defined on pg 113
 bind :: Db -> Address -> Address -> Db
 --bind db a1 a2 | trace (show a1 ++ "\n" ++ show a2) False = undefined
 bind db a1 a2 =
@@ -291,16 +293,7 @@ bind db a1 a2 =
         cell2 = getCell db a2
     in bindHelper db (cell1, a1) (cell2, a2)
 
-isRef :: Cell -> Bool
-isRef (REF _) = True
-isRef _       = False
-
-addrLt :: Address -> Address -> Bool
-addrLt (CODE a) (CODE b)         = a < b
-addrLt (CODE _) _                = True
-addrLt (REGS a) (REGS b) = a < b
-addrLt _ _                       = False
-
+-- does the actual work of binding
 bindHelper :: Db -> (Cell, Address) -> (Cell, Address) -> Db
 bindHelper db (REF addr, a1) (cell2, a2)
 --    | trace (show addr ++ "\t" ++ show cell2) False = undefined
@@ -313,32 +306,61 @@ bindHelper db (REF addr, a1) (cell2, a2)
 bindHelper db (cell, _) (_, a2) =
     let db' = putCell db a2 cell
     in  trail db' a2
-        
+
+-- helpers for bind/bindHelper
+isRef :: Cell -> Bool
+isRef (REF _) = True
+isRef _       = False
+
+-- does comparison of addresses. we can't just compare indexes
+-- like is done in the book, because we have separate heaps instead of
+-- one huge block of memory.
+addrLt :: Address -> Address -> Bool
+addrLt (CODE a) (CODE b)         = a < b
+addrLt (CODE _) _                = True
+addrLt (REGS a) (REGS b) = a < b
+addrLt _ _                       = False
+
+-- (this doesn't actually do anything right now, but might later if
+-- we end up doing more of the WAM)
+-- defined on pg 114
 trail :: Db -> Address -> Db
 --trail db _ | trace (show (regs db)) False = undefined
 trail db _ = db
 
+-- flattens a term into a list of refterms
 flattenTerm :: Term -> [RefTerm]
 flattenTerm t = referentiate $ elimDupes $ flattenHelper [t]
-    
-referentiate :: [Term] -> [RefTerm]
-referentiate ts = map (refTerm ts) ts
 
-refTerm :: [Term] -> Term -> RefTerm
-refTerm ts (V v)         = RefV v
-refTerm ts (S (f, subs)) = RefS (f, mapMaybe (\x->elemIndex x ts) subs)
-
+-- helper for flattenTerm
 flattenHelper :: [Term] -> [Term]
 flattenHelper []                        = []
 flattenHelper (v@(V _) : q)             = v : flattenHelper q
 flattenHelper (s@(S (_, subterms)) : q) = s : flattenHelper (q ++ subterms)
 
+-- eliminates duplicates in a list of terms
 elimDupes :: [Term] -> [Term]
 elimDupes = nubBy sameVar
             where sameVar (V u) (V v) = u == v
                   sameVar _ _         = False
-                  
-------- UNIFICATION ----
+
+-- makes a list of terms into a list of refterms
+referentiate :: [Term] -> [RefTerm]
+referentiate ts = map (refTerm ts) ts
+
+-- takes a list of terms, a single term T, and is
+-- the refterm representation of T
+refTerm :: [Term] -> Term -> RefTerm
+refTerm ts (V v)         = RefV v
+refTerm ts (S (f, subs)) = RefS (f, mapMaybe (\x->elemIndex x ts) subs)
+
+
+
+
+-- ----------- --
+-- UNIFICATION --
+-- ----------- --
+
 unify :: Db -> Address -> Address -> Maybe Db
 unify db a1 a2 = unify' db [a2, a1] -- use list as a stack, TOS is head
 
