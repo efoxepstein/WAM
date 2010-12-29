@@ -43,7 +43,8 @@ type Heap = ((Array Int Cell), Int)
 
 data Mode = READ | WRITE deriving (Show, Eq)
 
--- The real heap, the code heap, the registers
+-- The real heap, the code heap, the registers, along with
+-- some more state that we need to keep.
 data Db = Db { heap :: Heap
              , code :: Heap
              , regs :: Heap
