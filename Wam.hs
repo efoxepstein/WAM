@@ -284,9 +284,6 @@ isSelfRef :: Db -> Cell -> Bool
 isSelfRef db (REF x) | (REF x) == getCell db x = True
 isSelfRef _ _                                  = False
 
-unRef :: Db -> Cell -> Address
-unRef db (REF x) = x
-             
 bind :: Db -> Address -> Address -> Db
 --bind db a1 a2 | trace (show a1 ++ "\n" ++ show a2) False = undefined
 bind db a1 a2 =
