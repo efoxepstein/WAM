@@ -95,40 +95,60 @@ getCell db (HEAP idx) = (fst $ heap db) ! idx
 getCell db (CODE idx) = (fst $ code db) ! idx
 getCell db (REGS idx) = (fst $ regs db) ! idx
 
+-- puts a cell at an address
 putCell :: Db -> Address -> Cell -> Db
 putCell db@(Db {heap=(h', h)}) (HEAP i) cell = db {heap=(h' // [(i, cell)], h)} 
 putCell db@(Db {code=(h', h)}) (CODE i) cell = db {code=(h' // [(i, cell)], h)} 
 putCell db@(Db {regs=(h', h)}) (REGS i) cell = db {regs=(h' // [(i, cell)], h)} 
 
+-- increments the index part of an address
 incrAddr :: Address -> Address
 incrAddr (HEAP i) = HEAP (i+1)
 incrAddr (CODE i) = CODE (i+1)
 incrAddr (REGS i) = REGS (i+1)
 
+-- puts a cell on top of the heap
 pushOnHeap :: Heap -> Cell -> Heap
 pushOnHeap (heap, idx) cell = (heap // [(idx, cell)], idx + 1)
 
 
+
+
+-- ---------------------- --
+-- QUERY TERM COMPILATION --
+-- ---------------------- --
+
 compileQueryTerm :: Db -> Term -> Db
 compileQueryTerm db = fst . compileQueryRefs (db, []) . reorder . flattenTerm
 
+-- reorders a list of refterms so that everything is in the list
+-- before it's referenced. also removes references to variables (RefVs).
 reorder :: [RefTerm] -> [(Int, RefTerm)]
-reorder ts = filter (isRefS . snd ) $ fixOrder $ zip [0..] ts
+reorder ts = filter (isRefS . snd) $ fixOrder $ zip [0..] ts
 
 isRefS :: RefTerm -> Bool
 isRefS (RefS _) = True
 isRefS (RefV _) = False
 
+-- takes a list of indexes and refterms and returns a 'fixed'
+-- version where everything is in the list before it's referenced
 fixOrder :: [(Int, RefTerm)] -> [(Int, RefTerm)]
 fixOrder []                           = []
 fixOrder (v@(_, RefV _) : ts)         = v : fixOrder ts
 fixOrder (s@(_, RefS (_, idxs)) : ts) = (fixOrder front) ++ [s] ++ (fixOrder back)
                                       where (front, back) = pullToFront ts idxs
-
+-- takes a list of indexes and refterms and returns a pair of lists.
+-- the first pair has elements that are referenced somewhere in the
+-- whole list, the second pair has elements that aren't.
 pullToFront :: [(Int,RefTerm)] -> [Int] -> ([(Int,RefTerm)],[(Int,RefTerm)])
 pullToFront x []    = ([],x)
 pullToFront ts idxs = partition (\(x,_) -> elem x idxs) ts
 
+
+-- takes a db and a correctly-ordered list of refterms (see above functions
+-- for details about correct ordering) and does the actual compilation.
+-- TODO: this should be spun out into a helper. outside functions shouldn't
+-- have to deal with the list of ints at all.
 compileQueryRefs :: (Db, [Int]) -> [(Int, RefTerm)] -> (Db, [Int])
 --compileQueryRefs (db, i) _ | trace ("compileQueryRefs: " ++ show i ++ (take 1 (show db))) False = undefined
 compileQueryRefs db []                 = db
@@ -137,16 +157,23 @@ compileQueryRefs (db, is) ((i, RefS s@(f, args)) : ts) =
     let db1 = putStructure db s (REGS i)
         db2 = foldl setVarVal (db1, i : is) args
     in compileQueryRefs db2 ts
-    
+
+-- does setVariable or setValue depending on if we've seen the ref before
 setVarVal :: (Db, [Int]) -> Int -> (Db, [Int])
 --setVarVal (_, i) j | trace ("setVarVal " ++ (show i) ++ ": " ++ show j) False = undefined
 setVarVal (db, is) i | elem i is = (setValue db (getCell db (REGS i)), is)
                      | otherwise = (setVariable db (deref db (REGS i)), i : is)
-                     
+
+-- compiles a query term variable into the heap
+-- (when we've already seen it before and compiled it with setVariable)
+-- defined on pg 14, fig 2.2
 setValue :: Db -> Cell -> Db
 --setValue db i | trace ("setValue " ++ (show i)) False = undefined
 setValue db@(Db {code=code}) cell = db { code = pushOnHeap code cell }
 
+-- compiles a query term variable into the heap
+-- (when we haven't seen it before)
+-- defined on pg 14, fig 2.2
 setVariable :: Db -> Address -> Db
 --setVariable db i | trace ("setVariable " ++ (show i)) False = undefined
 setVariable db@(Db {code=code, regs=regs}) addr =
@@ -155,7 +182,8 @@ setVariable db@(Db {code=code, regs=regs}) addr =
         db2 = putCell db addr cell
     in db2 { code = code2 }
 
-
+-- compiles a query term structure into the heap
+-- defined on pg 14, fig 2.2
 putStructure :: Db -> (Func, [Int]) -> Address -> Db
 putStructure _ (f,_) _ | trace ("putStructure " ++ (show f)) False = undefined
 putStructure db@(Db {code=code, regs=regs}) (f, args) addr =
@@ -164,24 +192,35 @@ putStructure db@(Db {code=code, regs=regs}) (f, args) addr =
         code2 = pushOnHeap code1 (FUN f)
         db1   = putCell db addr (STR (CODE h))
     in  db1 { code = code2 }
-        
+
+
+
+
+-- ------------------------ --
+-- PROGRAM TERM COMPILATION --
+-- ------------------------ --
 
 compileProgramTerm :: Db -> Term -> Db
 compileProgramTerm db term =
     fst $ foldl compileRefTerm (db, []) (flattenTerm term)
 
--- This has some other responsibilities that it's not doing yet
+-- does the actual compilation of a flattened term
+-- TODO: this has some other responsibilities that it's not doing yet
 compileRefTerm :: (Db, [Int]) -> RefTerm -> (Db, [Int])
 compileRefTerm (db, idxs) (RefS (f, is)) =
     let db'  = getStructure db f
     in foldl unifyVarVal (db', idxs) is
-    
 compileRefTerm x _ = x
 
+-- picks unifyValue or unifyVariable depending on whether or not
+-- we've already seen the variable
 unifyVarVal :: (Db, [Int]) -> Int -> (Db, [Int])
 unifyVarVal (db, idxs) idx | elem idx idxs = (unifyValue db idx, idxs)
                            | otherwise     = (unifyVariable db idx, idx:idxs)         
-                           
+
+-- compiles a program term variable into the heap
+-- (when we've already seen it and compiled it with unifyVariable)
+-- defined on pg 18, fig 2.6
 unifyValue :: Db -> Int -> Db
 unifyValue _ _ | trace ("unifyValue") False = undefined
 unifyValue db@(Db {mode=READ, s=s}) i = db `fromMaybe` (unify db (REGS i) s)
@@ -189,22 +228,27 @@ unifyValue db@(Db {code=code, s=s}) i =
     let code' = pushOnHeap code (REF (CODE i))
     in  db { code = code', s = incrAddr s }
 
+-- compiles a program term variable into the heap
+-- (when we haven't seen it before)
+-- defined on pg 18, fig 2.6
 unifyVariable :: Db -> Int -> Db
 unifyVariable _ _ | trace ("unifyVariable") False = undefined
 unifyVariable db@(Db {mode=READ, s=s}) i =
     let cell = getCell db s
         db'  = putCell db (REGS i) cell
     in  db' { s = (incrAddr s) }
-    
 unifyVariable db@(Db {code=code, s=s, regs=regs}) i =
     let h   = snd code
         db1 = db  { code = pushOnHeap code (REF (CODE h)) }
         db2 = db1 { regs = pushOnHeap regs (REF (CODE h)) }
     in db2 { s = (incrAddr s) }
 
+-- compiles a program term structure into the heap
+-- defined on pg 18, fig 2.6   
 getStructure :: Db -> Func -> Db
 getStructure db f = getStructure' db f $ getCell db $ deref db (REGS (snd $ regs db))
-    
+
+-- helper for getStructure
 getStructure' :: Db -> Func -> Cell -> Db
 getStructure' _ _ _ | trace ("getStructure'") False = undefined
 getStructure' db@(Db {code=code, regs=(r,i)}) f (REF addr) =
@@ -219,8 +263,11 @@ getStructure' db@(Db {code=code}) f (STR addr)
     where cell = getCell db addr
     
     -- ^ we should set fail to be true here if things don't pattern match
-    -- but we don't because we don't know what fail is in L0
+    -- but we don't because we don't know what fail is in L0 (TODO)
 
+-- finds the original address that's pointed to by an
+-- address in the database
+-- defined on pg 17, fig 2.5   
 deref :: Db -> Address -> Address
 --deref db adr | trace ("deref\t" ++ show adr) False = undefined
 deref db adr | isSelfRef db cell = adr
@@ -228,6 +275,7 @@ deref db adr | isSelfRef db cell = adr
              | otherwise         = adr
              where cell = getCell db adr
 
+-- some helpers for deref
 isFun :: Cell -> Bool
 isFun (FUN _) = True
 isFun _       = False
