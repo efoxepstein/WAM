@@ -100,11 +100,6 @@ putCell db@(Db {heap=(h', h)}) (HEAP i) cell = db {heap=(h' // [(i, cell)], h)}
 putCell db@(Db {code=(h', h)}) (CODE i) cell = db {code=(h' // [(i, cell)], h)} 
 putCell db@(Db {regs=(h', h)}) (REGS i) cell = db {regs=(h' // [(i, cell)], h)} 
 
-cellAddr :: Cell -> Address
-cellAddr (REF x) = x
-cellAddr (STR x) = x
-cellAddr _       = (HEAP 999999)
-
 incrAddr :: Address -> Address
 incrAddr (HEAP i) = HEAP (i+1)
 incrAddr (CODE i) = CODE (i+1)
