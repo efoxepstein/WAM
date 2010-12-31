@@ -83,9 +83,9 @@ getHeap addr size =
 
 -- Returns a new database
 getDb :: Db
-getDb = Db { heap = (getHeap (HEAP 0) 20)
-           , code = (getHeap (CODE 0) 20)
-           , regs = (getHeap (REGS 0) 20)
+getDb = Db { heap = (getHeap (HEAP 0) 30)
+           , code = (getHeap (CODE 0) 30)
+           , regs = (getHeap (REGS 0) 30)
            , mode = WRITE
            ,    s = (CODE 0) }
 
@@ -444,8 +444,12 @@ testTerm = p "add(o, X, X)"
 testTerm2 = p "p(f(X), h(Y, f(a)), Y)"
 testQuery = p "p(Z, h(Z, W), f(W))"
 
+printCode x = putStrLn $ intercalate "\n" $ map (\(y,z)->(show y) ++ "\t" ++ (show z)) $ zip [0..] $ getCode x
+
 getCode = elems . fst . code
 getRegs = elems . fst . regs
 
 test     = getCode $ compileQueryTerm getDb testQuery
 testRegs = getRegs $ compileQueryTerm getDb testQuery
+
+testBoth = printCode $ compileQueryTerm (compileProgramTerm getDb testTerm2) testQuery
