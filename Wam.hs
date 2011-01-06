@@ -56,7 +56,7 @@ data Db = Db { heap :: Heap
 instance Show Term where
     show (V v)           = v
     show (S ((f,a), [])) = f
-    show (S ((f,a), ts)) = f ++ "(" ++ (show ts) ++ ")"
+    show (S ((f,a), ts)) = f ++ "(" ++ (intercalate ", " (map show ts)) ++ ")"
 
 instance Show RefTerm where
     show (RefV v)           = v
@@ -384,7 +384,9 @@ refStruct :: [(Var, Int)] -> Struct -> [(Term, Int)] -> RefTerm
 --refStruct vs s ts | trace ("refStruct: " ++ show vs ++ show s ++ show ts) False = undefined
 refStruct vs ((f,a), subs) ts = RefS ((f,a), snd $ mapAccumL foo (vs,ts) subs)
 
+foo x y | trace ("foo: " ++ show x ++ "\t" ++ show y) False = undefined
 foo (vs, ts) (V v)   = ((vs, ts), fromJust $ lookup v vs)
+foo (vs, ts) s@(S _) | trace (show ((vs, xs), i)) False = undefined where (_, i):xs = dropWhile ((s/=).fst) ts
 foo (vs, ts) s@(S _) = ((vs, xs), i) where (_, i):xs = dropWhile ((s/=).fst) ts
 
 
