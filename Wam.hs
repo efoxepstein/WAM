@@ -365,9 +365,27 @@ elimDupes = nubBy sameVar
             where sameVar (V u) (V v) = u == v
                   sameVar _ _         = False
 
+isVar :: Term -> Bool
+isVar (V _) = True
+isVar _     = False
+
 -- makes a list of terms into a list of refterms
 referentiate :: [Term] -> [RefTerm]
-referentiate ts = map (refTerm ts) ts
+referentiate ts = let ts' = zip ts [0..]
+                      vs  = map (\(V v, i) -> (v, i)) $ filter (isVar.fst) ts'
+                  in  refHelper vs ts'
+
+refHelper :: [(Var, Int)] -> [(Term, Int)] -> [RefTerm]
+--refHelper vs ts | trace ("refHelper: " ++ show vs ++ show ts) False = undefined
+refHelper _ [] = []
+refHelper vs ((S s, i) : ts) = refStruct vs s ts : refHelper vs ts
+refHelper vs ((V v, i) : ts) = RefV v : refHelper vs ts
+
+refStruct :: [(Var, Int)] -> Struct -> [(Term, Int)] -> RefTerm
+--refStruct vs s ts | trace ("refStruct: " ++ show vs ++ show s ++ show ts) False = undefined
+refStruct vs ((f,a), subs) ts = RefS ((f,a), map safeLookup subs)
+    where safeLookup (V v) = fromJust $ lookup v vs
+          safeLookup (S s) = fromJust $ lookup (S s) ts
 
 -- takes a list of terms, a single term T, and is
 -- the refterm representation of T
