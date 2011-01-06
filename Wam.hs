@@ -57,7 +57,6 @@ instance Show Term where
     show (V v)           = v
     show (S ((f,a), [])) = f
     show (S ((f,a), ts)) = f ++ "(" ++ (show ts) ++ ")"
-    showList x           = showString (intercalate ", " (map show x))
 
 instance Show RefTerm where
     show (RefV v)           = v
@@ -383,9 +382,21 @@ refHelper vs ((V v, i) : ts) = RefV v : refHelper vs ts
 
 refStruct :: [(Var, Int)] -> Struct -> [(Term, Int)] -> RefTerm
 --refStruct vs s ts | trace ("refStruct: " ++ show vs ++ show s ++ show ts) False = undefined
-refStruct vs ((f,a), subs) ts = RefS ((f,a), map safeLookup subs)
-    where safeLookup (V v) = fromJust $ lookup v vs
-          safeLookup (S s) = fromJust $ lookup (S s) ts
+refStruct vs ((f,a), subs) ts = RefS ((f,a), snd $ mapAccumL foo (vs,ts) subs)
+
+foo (vs, ts) (V v)   = ((vs, ts), fromJust $ lookup v vs)
+foo (vs, ts) s@(S _) = ((vs, xs), i) where (_, i):xs = dropWhile ((s/=).fst) ts
+
+
+-- this should probably use mapAccumL, but it works
+lookupSubterms :: [Term] -> [(Var, Int)] -> [(Term, Int)] -> [Int]
+lookupSubterms [] vs ts = []
+lookupSubterms (V v : subs) vs ts = (fromJust $ lookup v vs) : lookupSubterms subs vs ts
+lookupSubterms (S s:_) b c | trace ("lus: " ++ show c ++ "\t" ++ show (snd $ head good) ++ "\t" ++ show (tail good)) False = undefined
+    where good = dropWhile (((S s)/=).fst) c
+lookupSubterms (S s : subs) vs ts = (snd $ head good) : (lookupSubterms subs vs (tail good))
+    where good = dropWhile (((S s)/=).fst) ts
+    
 
 -- takes a list of terms, a single term T, and is
 -- the refterm representation of T
