@@ -350,64 +350,38 @@ trail db _ = db
 
 -- flattens a term into a list of refterms
 flattenTerm :: Term -> [RefTerm]
-flattenTerm t = referentiate $ elimDupes $ flattenHelper [t]
+flattenTerm t = elimDupes $ fixVars $ flattenHelper 0 [t]
 
--- helper for flattenTerm
-flattenHelper :: [Term] -> [Term]
-flattenHelper []                        = []
-flattenHelper (v@(V _) : q)             = v : flattenHelper q
-flattenHelper (s@(S (_, subterms)) : q) = s : flattenHelper (q ++ subterms)
+flattenHelper :: Int -> [Term] -> [RefTerm]
+flattenHelper _ [] = []
+flattenHelper i (V v : ts) = RefV v : flattenHelper (i + 1) ts
+flattenHelper i (S ((f,a), subs) : ts) = RefS ((f,a), range) : flattenHelper (i+1) (ts ++ subs)
+    where range = [i + 1 + length ts .. i + length ts + length subs]
+
+isRefV (RefV _) = True
+isRefV _        = False
+
+fixVars :: [RefTerm] -> [RefTerm]
+fixVars ts = 
+    let ts' = zip ts [0..]
+        vs  = map (\(RefV v, i) -> (v, i)) $ filter (isRefV.fst) ts'
+        vs' = sortBy (\x y -> compare (snd x) (snd y)) vs
+    in straightenVars vs' ts
+
+straightenVars :: [(Var, Int)] -> [RefTerm] -> [RefTerm]
+straightenVars _ [] = []
+straightenVars vs (RefV v : ts) = RefV v : straightenVars vs ts
+straightenVars vs (RefS (f, ss) : ts) = RefS (f, map findLeast ss) : straightenVars vs ts
+    where findLeast :: Int -> Int
+          findLeast x = let v  = find ((x==).snd) vs
+                            v' = v >>= (\y -> lookup (fst y) vs)
+                        in  x `fromMaybe` v'
 
 -- eliminates duplicates in a list of terms
-elimDupes :: [Term] -> [Term]
+elimDupes :: [RefTerm] -> [RefTerm]
 elimDupes = nubBy sameVar
-            where sameVar (V u) (V v) = u == v
+            where sameVar (RefV u) (RefV v) = u == v
                   sameVar _ _         = False
-
-isVar :: Term -> Bool
-isVar (V _) = True
-isVar _     = False
-
--- makes a list of terms into a list of refterms
-referentiate :: [Term] -> [RefTerm]
-referentiate ts = let ts' = zip ts [0..]
-                      vs  = map (\(V v, i) -> (v, i)) $ filter (isVar.fst) ts'
-                  in  refHelper vs ts'
-
-refHelper :: [(Var, Int)] -> [(Term, Int)] -> [RefTerm]
---refHelper vs ts | trace ("refHelper: " ++ show vs ++ show ts) False = undefined
-refHelper _ [] = []
-refHelper vs ((S s, i) : ts) = refStruct vs s ts : refHelper vs ts
-refHelper vs ((V v, i) : ts) = RefV v : refHelper vs ts
-
-refStruct :: [(Var, Int)] -> Struct -> [(Term, Int)] -> RefTerm
---refStruct vs s ts | trace ("refStruct: " ++ show vs ++ show s ++ show ts) False = undefined
-refStruct vs ((f,a), subs) ts = RefS ((f,a), snd $ mapAccumL foo (vs,ts) subs)
-
-foo x y | trace ("foo: " ++ show x ++ "\t" ++ show y) False = undefined
-foo (vs, ts) (V v)   = ((vs, ts), fromJust $ lookup v vs)
-foo (vs, ts) s@(S _) | trace (show ((vs, xs), i)) False = undefined where (_, i):xs = dropWhile ((s/=).fst) ts
-foo (vs, ts) s@(S _) = ((vs, xs), i) where (_, i):xs = dropWhile ((s/=).fst) ts
-
-
--- this should probably use mapAccumL, but it works
-lookupSubterms :: [Term] -> [(Var, Int)] -> [(Term, Int)] -> [Int]
-lookupSubterms [] vs ts = []
-lookupSubterms (V v : subs) vs ts = (fromJust $ lookup v vs) : lookupSubterms subs vs ts
-lookupSubterms (S s:_) b c | trace ("lus: " ++ show c ++ "\t" ++ show (snd $ head good) ++ "\t" ++ show (tail good)) False = undefined
-    where good = dropWhile (((S s)/=).fst) c
-lookupSubterms (S s : subs) vs ts = (snd $ head good) : (lookupSubterms subs vs (tail good))
-    where good = dropWhile (((S s)/=).fst) ts
-    
-
--- takes a list of terms, a single term T, and is
--- the refterm representation of T
-refTerm :: [Term] -> Term -> RefTerm
-refTerm ts (V v)         = RefV v
-refTerm ts (S (f, subs)) = RefS (f, mapMaybe (\x->elemIndex x ts) subs)
-
-
-
 
 -- ----------- --
 -- UNIFICATION --
