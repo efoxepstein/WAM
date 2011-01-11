@@ -158,7 +158,7 @@ compileQueryRefs (db, is) ((i, RefS s@(f, args)) : ts) =
 
 -- does setVariable or setValue depending on if we've seen the ref before
 setVarVal :: (Db, [Int]) -> Int -> (Db, [Int])
-setVarVal (_, i) j | trace ("setVarVal " ++ (show i) ++ ": " ++ show j) False = undefined
+--setVarVal (_, i) j | trace ("setVarVal " ++ (show i) ++ ": " ++ show j) False = undefined
 setVarVal (db, is) i | elem i is = (setValue db (getCell db (REGS i)), is)
                      | otherwise = (setVariable db (REGS i), i : is)
 
@@ -166,14 +166,14 @@ setVarVal (db, is) i | elem i is = (setValue db (getCell db (REGS i)), is)
 -- (when we've already seen it before and compiled it with setVariable)
 -- defined on pg 14, fig 2.2
 setValue :: Db -> Cell -> Db
-setValue db i | trace ("setValue " ++ (show i)) False = undefined
+--setValue db i | trace ("setValue " ++ (show i)) False = undefined
 setValue db@(Db {code=code}) cell = db { code = pushOnHeap code cell }
 
 -- compiles a query term variable into the heap
 -- (when we haven't seen it before)
 -- defined on pg 14, fig 2.2
 setVariable :: Db -> Address -> Db
-setVariable db i | trace ("setVariable " ++ (show i)) False = undefined
+--setVariable db i | trace ("setVariable " ++ (show i)) False = undefined
 setVariable db@(Db {code=code, regs=regs}) addr =
     let cell  = REF (CODE (snd code))
         code2 = pushOnHeap code cell
@@ -286,9 +286,10 @@ getStructure' db@(Db {code=code}) f (STR addr)
 -- address in the database
 -- defined on pg 17, fig 2.5   
 deref :: Db -> Address -> Address
-deref db adr | isSelfRef db cell = adr
-             | isRef cell        = deref db $ (\(REF x) -> x) cell
-             | otherwise         = adr
+deref db adr | trace ("Deref " ++ show adr ++ " => " ++ show cell) False = undefined
+             | isSelfRef db cell adr = adr
+             | isRef cell            = deref db $ (\(REF x) -> x) cell
+             | otherwise             = adr
              where cell = getCell db adr
 
 -- some helpers for deref
@@ -296,9 +297,9 @@ isFun :: Cell -> Bool
 isFun (FUN _) = True
 isFun _       = False
 
-isSelfRef :: Db -> Cell -> Bool
-isSelfRef db (REF x) | (REF x) == getCell db x = True
-isSelfRef _ _                                  = False
+isSelfRef :: Db -> Cell -> Address -> Bool
+isSelfRef db (REF x) addr | addr == x = True
+isSelfRef _ _ _                       = False
 
 -- does 'bind' (TODO: expand on this explanation)
 -- defined on pg 113
@@ -385,7 +386,7 @@ elimDupes = nubBy sameVar
 -- ----------- --
 
 unify :: Db -> Address -> Address -> Db
-unify db a1 a2 = db `fromMaybe` unify' db [a2, a1] -- use list as a stack, TOS is head
+unify db a1 a2 = fromJust $ unify' db [a2, a1] -- use list as a stack, TOS is head
 
 
 -- What?
@@ -401,7 +402,7 @@ unify' db _ = Just db
 -- If the two addresses point to REFs, then bind the first to the second
 -- Otherwise, they should be REFs that point to FUNs. If not, we're in trouble...
 unifyTags :: Db -> Address -> Address -> (Maybe Db, [Address])
-unifyTags _ _ _ | trace ("unifyTags") False = undefined
+unifyTags _ _ _ | trace ("unifyTags: ") False = undefined
 unifyTags db a1 a2 | a1 == a2  = (Just db, [])
                    | otherwise =
     let c1 = trace ("\tCell1: " ++ show (getCell db a1)) (getCell db a1)
@@ -417,7 +418,7 @@ unifyFunctors db (STR a, aAddr) (STR b, bAddr) =
     let a' = trace ("\tCell1: " ++ show (getCell db a)) (getCell db a)
         b' = trace ("\tCell2: " ++ show (getCell db b)) (getCell db b)
     in if a' == b'
-       then (Just db, takeCells db (incrAddr aAddr) (incrAddr bAddr))
+       then (Just db, takeCells db a b)
        else (Nothing, [])
 
 takeCells :: Db -> Address -> Address -> [Address]
@@ -425,7 +426,6 @@ takeCells _ a1 a2 | trace ("takeCells: " ++ show (a1, a2)) False = undefined
 takeCells db a1 a2 =
     case traceShowRet (getCell db a1) of
         (FUN (_, arity)) -> traceShowRet $ takeCells' db arity (incrAddr a1) (incrAddr a2)
-        _                -> []
     where takeCells' _  0 _ _ = []
           takeCells' db x a b = (b : a : takeCells' db (x-1) (incrAddr a) (incrAddr b))
 
@@ -495,3 +495,4 @@ tc2 = unify (testL0 "f(a,b,c)" "f(X,Y,Z)") (CODE 0) (CODE 11)
 tc3 = unify (testL0 "f(a,a,b)" "f(X,X,Z)") (CODE 0) (CODE 11)
 tc4 = unify (testL0 "f(X)" "f(a)") (CODE 0) (CODE 5)
 tc5 = unify (testL0 "f(X,b,Z)" "f(a,Y,c)") (CODE 0) (CODE 11)
+tc6 = unify (testL0 "f(X, g(X))" "f(Y, g(z))") (CODE 0) (CODE 12)
