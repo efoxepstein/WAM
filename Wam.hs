@@ -125,7 +125,7 @@ compileQueryTerm db = fst . compileQueryRefs (db, []) . reorder . flattenTerm
 -- reorders a list of refterms so that everything is in the list
 -- before it's referenced. also removes references to variables (RefVs).
 reorder :: [RefTerm] -> [(Int, RefTerm)]
-reorder ts = filter (isRefS . snd) $ fixOrder $ zip [0..] ts
+reorder ts = fixOrder $ filter (isRefS . snd) $ zip [0..] ts
 
 isRefS :: RefTerm -> Bool
 isRefS (RefS _) = True
@@ -134,16 +134,13 @@ isRefS (RefV _) = False
 -- takes a list of indexes and refterms and returns a 'fixed'
 -- version where everything is in the list before it's referenced
 fixOrder :: [(Int, RefTerm)] -> [(Int, RefTerm)]
-fixOrder []                           = []
-fixOrder (v@(_, RefV _) : ts)         = v : fixOrder ts
-fixOrder (s@(_, RefS (_, idxs)) : ts) = (fixOrder front) ++ [s] ++ (fixOrder back)
-                                      where (front, back) = pullToFront ts idxs
--- takes a list of indexes and refterms and returns a pair of lists.
--- the first pair has elements that are referenced somewhere in the
--- whole list, the second pair has elements that aren't.
-pullToFront :: [(Int,RefTerm)] -> [Int] -> ([(Int,RefTerm)],[(Int,RefTerm)])
-pullToFront x []    = ([],x)
-pullToFront ts idxs = partition (\(x,_) -> elem x idxs) ts
+--fixOrder x | trace (show x) False = undefined
+fixOrder [] = []
+fixOrder ts =
+    let (bad, good) = partition (\(i,_) -> any (referredTo i) ts) ts
+    in  (fixOrder bad) ++ good
+    
+referredTo i (_, RefS (_, as)) = any (i==) as
 
 
 -- takes a db and a correctly-ordered list of refterms (see above functions
@@ -161,22 +158,22 @@ compileQueryRefs (db, is) ((i, RefS s@(f, args)) : ts) =
 
 -- does setVariable or setValue depending on if we've seen the ref before
 setVarVal :: (Db, [Int]) -> Int -> (Db, [Int])
---setVarVal (_, i) j | trace ("setVarVal " ++ (show i) ++ ": " ++ show j) False = undefined
+setVarVal (_, i) j | trace ("setVarVal " ++ (show i) ++ ": " ++ show j) False = undefined
 setVarVal (db, is) i | elem i is = (setValue db (getCell db (REGS i)), is)
-                     | otherwise = (setVariable db (deref db (REGS i)), i : is)
+                     | otherwise = (setVariable db (REGS i), i : is)
 
 -- compiles a query term variable into the heap
 -- (when we've already seen it before and compiled it with setVariable)
 -- defined on pg 14, fig 2.2
 setValue :: Db -> Cell -> Db
---setValue db i | trace ("setValue " ++ (show i)) False = undefined
+setValue db i | trace ("setValue " ++ (show i)) False = undefined
 setValue db@(Db {code=code}) cell = db { code = pushOnHeap code cell }
 
 -- compiles a query term variable into the heap
 -- (when we haven't seen it before)
 -- defined on pg 14, fig 2.2
 setVariable :: Db -> Address -> Db
---setVariable db i | trace ("setVariable " ++ (show i)) False = undefined
+setVariable db i | trace ("setVariable " ++ (show i)) False = undefined
 setVariable db@(Db {code=code, regs=regs}) addr =
     let cell  = REF (CODE (snd code))
         code2 = pushOnHeap code cell
@@ -491,3 +488,10 @@ test     = getCode $ compileQueryTerm getDb testQuery
 testRegs = getRegs $ compileQueryTerm getDb testQuery
 
 testBoth = printCode $ compileQueryTerm (compileProgramTerm getDb testTerm2) testQuery
+
+testL0 prog qry = compileQueryTerm (compileProgramTerm getDb $ p prog) (p qry)
+tc1 = unify (testL0 "f(a)" "f(X)") (CODE 0) (CODE 5)
+tc2 = unify (testL0 "f(a,b,c)" "f(X,Y,Z)") (CODE 0) (CODE 11)
+tc3 = unify (testL0 "f(a,a,b)" "f(X,X,Z)") (CODE 0) (CODE 11)
+tc4 = unify (testL0 "f(X)" "f(a)") (CODE 0) (CODE 5)
+tc5 = unify (testL0 "f(X,b,Z)" "f(a,Y,c)") (CODE 0) (CODE 11)
