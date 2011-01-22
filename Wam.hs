@@ -120,7 +120,7 @@ pushOnHeap (heap, idx) cell = (heap // [(idx, cell)], idx + 1)
 -- ---------------------- --
 
 compileQueryTerm :: Db -> Term -> Db
-compileQueryTerm db = fst . compileQueryRefs (db, []) . reorder . flattenTerm
+compileQueryTerm db = fst . compileQueryRefs (db, []) . fixOrder . flattenTerm
 
 -- reorders a list of refterms so that everything is in the list
 -- before it's referenced. also removes references to variables (RefVs).
@@ -223,11 +223,12 @@ compileProgramTerm db term =
 
 -- does the actual compilation of a flattened term
 -- TODO: this has some other responsibilities that it's not doing yet.. hmmm
-compileRefTerm :: (Db, [Int]) -> RefTerm -> (Db, [Int])
-compileRefTerm (db, idxs) (RefS (f, is)) =
-    let db'  = getStructure db f (REGS (snd $ regs db))
-    in foldl unifyVarVal (db', idxs) is
-compileRefTerm (db@(Db {regs=(r,i)}), idxs) _ = (db {regs=(r,i+1)}, idxs)
+compileRefTerm :: (Db, [Int]) -> (Int, RefTerm) -> (Db, [Int])
+compileRefTerm (db@Db{regs=(r,_)}, idxs) (i, RefS (f, is)) =
+    let db'  = db {regs = (r, i)}
+        db'' = getStructure db f (REGS (snd $ regs db))
+    in foldl unifyVarVal (db'', idxs) is
+-- compileRefTerm (db@(Db {regs=(r,i)}), idxs) _ = (db {regs=(r,i+1)}, idxs)
 
 -- picks unifyValue or unifyVariable depending on whether or not
 -- we've already seen the variable
@@ -334,10 +335,10 @@ isRef _       = False
 -- like is done in the book, because we have separate heaps instead of
 -- one huge block of memory.
 addrLt :: Address -> Address -> Bool
-addrLt (CODE a) (CODE b)         = a < b
-addrLt (CODE _) _                = True
+addrLt (CODE a) (CODE b) = a < b
+addrLt (CODE _) _        = True
 addrLt (REGS a) (REGS b) = a < b
-addrLt _ _                       = False
+addrLt _ _               = False
 
 -- (this doesn't actually do anything right now, but might later if
 -- we end up doing more of the WAM)
@@ -347,33 +348,59 @@ trail :: Db -> Address -> Db
 trail db _ = db
 
 -- flattens a term into a list of refterms
-flattenTerm :: Term -> [RefTerm]
-flattenTerm t = elimDupes $ fixVars $ flattenHelper 0 [t]
+flattenTerm :: Term -> [(Int, RefTerm)]
+flattenTerm t = zip [0..] $ fixUp (flattenHelper [t] []) []
 
-flattenHelper :: Int -> [Term] -> [RefTerm]
-flattenHelper _ [] = []
-flattenHelper i (V v : ts) = RefV v : flattenHelper (i + 1) ts
-flattenHelper i (S ((f,a), subs) : ts) = RefS ((f,a), range) : flattenHelper (i+1) (ts ++ subs)
-    where range = [i + 1 + length ts .. i + length ts + length subs]
+ft = snd . unzip . flattenTerm
 
-isRefV (RefV _) = True
-isRefV _        = False
+-- Puts terms into form
+-- [(parent_idx, RefTerm)]
+flattenHelper :: [Term] -> [RefTerm] -> [RefTerm]
+flattenHelper []         acc = acc
+flattenHelper (V v : ts) acc = flattenHelper ts (acc ++ [RefV v])
+flattenHelper (S (f, subs) : ts) acc =
+    let subs' = [length ts + length acc + 1 .. length ts + length acc + length subs]
+    in flattenHelper (ts ++ subs) (acc ++ [RefS (f, subs')])
 
-fixVars :: [RefTerm] -> [RefTerm]
-fixVars ts = 
-    let ts' = zip ts [0..]
-        vs  = map (\(RefV v, i) -> (v, i)) $ filter (isRefV.fst) ts'
-        vs' = sortBy (\x y -> compare (snd x) (snd y)) vs
-    in straightenVars vs' ts
+-- need to subtract one from everything referencing anything above the index of cur elmt
 
-straightenVars :: [(Var, Int)] -> [RefTerm] -> [RefTerm]
-straightenVars _ [] = []
-straightenVars vs (RefV v : ts) = RefV v : straightenVars vs ts
-straightenVars vs (RefS (f, ss) : ts) = RefS (f, map findLeast ss) : straightenVars vs ts
-    where findLeast :: Int -> Int
-          findLeast x = let v  = find ((x==).snd) vs
-                            v' = v >>= (\y -> lookup (fst y) vs)
-                        in  x `fromMaybe` v'
+fixUp :: [RefTerm] -> [RefTerm] -> [RefTerm]
+--fixUp ts acc | trace (show ("fixUp", ts, acc)) False = undefined
+fixUp []            acc = acc
+fixUp (RefV v : ts) acc = fixUp ts' (acc' ++ [RefV v])
+                        where (acc', ts') = stripVar acc v ts
+fixUp (s : ts)      acc = fixUp ts  (acc  ++ [s])
+
+stripVar :: [RefTerm] -> Var -> [RefTerm] -> ([RefTerm], [RefTerm])
+--stripVar acc v ts | trace (show ("stripVar", acc, v, ts)) False = undefined
+stripVar acc v ts =
+    let idxs = length acc : map (length acc + 1 +) (elemIndices (RefV v) ts)
+        acc' = cleanPast idxs acc
+        ts'  = cleanFuture v idxs ts
+    in (acc', ts')
+    
+cleanPast :: [Int] -> [RefTerm] -> [RefTerm]
+--cleanPast is ts | trace (show ("cleanPast", is, ts)) False = undefined
+cleanPast _  []                    = []
+cleanPast is (RefV v : ts)         = RefV v : cleanPast is ts
+cleanPast is (RefS (f, subs) : ts) = RefS (f, map (reduceToFirst is) subs) : cleanPast is ts
+
+cleanFuture :: Var -> [Int] -> [RefTerm] -> [RefTerm]
+--cleanFuture v is ts | traceShow ("cleanFuture", v, is, ts) False = undefined
+cleanFuture _ _ []             = []
+cleanFuture v is (RefV u : ts) | u == v    = cleanFuture v is (subtractOneFromEach ts)
+                               | otherwise = RefV u : cleanFuture v is ts
+cleanFuture v is (RefS (f, subs) : ts)     = RefS (f, map (reduceToFirst is) subs) : cleanFuture v is ts                            
+
+reduceToFirst :: [Int] -> Int -> Int
+reduceToFirst is i | elem i is = head is
+                   | otherwise = i
+
+subtractOneFromEach :: [RefTerm] -> [RefTerm]
+subtractOneFromEach []                    = []
+subtractOneFromEach (RefS (f, idxs) : ts) = RefS (f, map (-1+) idxs) : subtractOneFromEach ts
+subtractOneFromEach (v : ts)              = v : subtractOneFromEach ts
+
 
 -- eliminates duplicates in a list of terms
 elimDupes :: [RefTerm] -> [RefTerm]
@@ -496,3 +523,4 @@ tc3 = unify (testL0 "f(a,a,b)" "f(X,X,Z)") (CODE 0) (CODE 11)
 tc4 = unify (testL0 "f(X)" "f(a)") (CODE 0) (CODE 5)
 tc5 = unify (testL0 "f(X,b,Z)" "f(a,Y,c)") (CODE 0) (CODE 11)
 tc6 = unify (testL0 "f(X, g(X))" "f(Y, g(z))") (CODE 0) (CODE 12)
+tc7 = unify (testL0 "p(f(X), h(Y, f(a)), Y)" "p(Z, h(Z, W), f(W))") (CODE 0) (CODE 24)
