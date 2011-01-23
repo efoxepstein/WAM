@@ -120,28 +120,30 @@ pushOnHeap (heap, idx) cell = (heap // [(idx, cell)], idx + 1)
 -- ---------------------- --
 
 compileQueryTerm :: Db -> Term -> Db
-compileQueryTerm db = fst . compileQueryRefs (db, []) . fixOrder . flattenTerm
+compileQueryTerm db = fst . compileQueryRefs (db, []) . reorder . flattenTerm
 
 -- reorders a list of refterms so that everything is in the list
 -- before it's referenced. also removes references to variables (RefVs).
-reorder :: [RefTerm] -> [(Int, RefTerm)]
-reorder ts = fixOrder $ filter (isRefS . snd) $ zip [0..] ts
+reorder :: [(Int, RefTerm)] -> [(Int, RefTerm)]
+reorder ts = fixOrder $ filter (isRefS . snd) ts
 
 isRefS :: RefTerm -> Bool
 isRefS (RefS _) = True
-isRefS (RefV _) = False
+isRefS _        = False
 
 -- takes a list of indexes and refterms and returns a 'fixed'
 -- version where everything is in the list before it's referenced
 fixOrder :: [(Int, RefTerm)] -> [(Int, RefTerm)]
---fixOrder x | trace (show x) False = undefined
+fixOrder x | traceShow ("fixOrder", x) False = undefined
 fixOrder [] = []
 fixOrder ts =
     let (bad, good) = partition (\(i,_) -> any (referredTo i) ts) ts
     in  (fixOrder bad) ++ good
     
-referredTo i (_, RefS (_, as)) = any (i==) as
-
+referredTo :: Int -> (Int, RefTerm) -> Bool
+referredTo i (_, RefS (_, as)) | traceShow (i, as) False = undefined
+referredTo i (_, RefS (_, as)) = elem i as
+referredTo _ _                 = False
 
 -- takes a db and a correctly-ordered list of refterms (see above functions
 -- for details about correct ordering) and does the actual compilation.
@@ -224,11 +226,12 @@ compileProgramTerm db term =
 -- does the actual compilation of a flattened term
 -- TODO: this has some other responsibilities that it's not doing yet.. hmmm
 compileRefTerm :: (Db, [Int]) -> (Int, RefTerm) -> (Db, [Int])
+compileRefTerm _ i | traceShow ("CompileRefTerm", i) False = undefined
 compileRefTerm (db@Db{regs=(r,_)}, idxs) (i, RefS (f, is)) =
     let db'  = db {regs = (r, i)}
-        db'' = getStructure db f (REGS (snd $ regs db))
+        db'' = getStructure db f (REGS i)
     in foldl unifyVarVal (db'', idxs) is
--- compileRefTerm (db@(Db {regs=(r,i)}), idxs) _ = (db {regs=(r,i+1)}, idxs)
+compileRefTerm (db@(Db {regs=(r,i)}), idxs) _ = (db {regs=(r, i)}, idxs)
 
 -- picks unifyValue or unifyVariable depending on whether or not
 -- we've already seen the variable
@@ -240,7 +243,7 @@ unifyVarVal (db, idxs) idx | elem idx idxs = (unifyValue db idx, idxs)
 -- (when we've already seen it and compiled it with unifyVariable)
 -- defined on pg 18, fig 2.6
 unifyValue :: Db -> Int -> Db
---unifyValue db@(Db {mode=m}) i | trace ("UNIFYVALUE: " ++ show (m,i)) False = undefined
+unifyValue db@(Db {mode=m}) i | trace ("UNIFYVALUE: " ++ show (m,i)) False = undefined
 unifyValue db@(Db {mode=READ, s=s}) i = unify db (REGS i) s
 unifyValue db@(Db {code=code, s=s}) i = 
     let code' = pushOnHeap code $ getCell db (REGS i) -- (REF (CODE i))
@@ -250,7 +253,7 @@ unifyValue db@(Db {code=code, s=s}) i =
 -- (when we haven't seen it before)
 -- defined on pg 18, fig 2.6
 unifyVariable :: Db -> Int -> Db
---unifyVariable db@(Db {mode=m}) i | trace ("UNIFYVARIABLE: " ++ show (m, i)) False = undefined
+unifyVariable db@(Db {mode=m}) i | trace ("UNIFYVARIABLE: " ++ show (m, i)) False = undefined
 unifyVariable db@(Db {mode=READ, s=s}) i =
     let cell = getCell db s
         db'  = putCell db (REGS i) cell
@@ -263,13 +266,13 @@ unifyVariable db@(Db {code=code, s=s, regs=regs}) i =
 -- compiles a program term structure into the heap
 -- defined on pg 18, fig 2.6   
 getStructure :: Db -> Func -> Address -> Db
---getStructure _ f addr | trace ("GETSTRUCTURE: " ++ show f ++ "\t" ++ show addr) False = undefined
+getStructure _ f addr | trace ("GETSTRUCTURE: " ++ show f ++ "\t" ++ show addr) False = undefined
 getStructure db f addr = getStructure' db f $ getCell db $ deref db addr
 
 
 -- helper for getStructure
 getStructure' :: Db -> Func -> Cell -> Db
---getStructure' _ f c  | trace ("GETSTRUCTURE': " ++ show f ++ "\t" ++ show c) False = undefined
+getStructure' _ f c  | trace ("GETSTRUCTURE': " ++ show f ++ "\t" ++ show c) False = undefined
 getStructure' db@(Db {code=code, regs=(r,i)}) f (REF addr) =
     let code1 = pushOnHeap code  (STR (CODE (1 + (snd code))))
         code2 = pushOnHeap code1 (FUN f)
@@ -387,14 +390,14 @@ cleanPast is (RefS (f, subs) : ts) = RefS (f, map (reduceToFirst is) subs) : cle
 
 cleanFuture :: Var -> [Int] -> [RefTerm] -> [RefTerm]
 --cleanFuture v is ts | traceShow ("cleanFuture", v, is, ts) False = undefined
-cleanFuture _ _ []             = []
-cleanFuture v is (RefV u : ts) | u == v    = cleanFuture v is (subtractOneFromEach ts)
+cleanFuture _ _ []                         = []
+cleanFuture v is (RefV u : ts) | u == v    = cleanFuture v is ts --(subtractOneFromEach ts)
                                | otherwise = RefV u : cleanFuture v is ts
 cleanFuture v is (RefS (f, subs) : ts)     = RefS (f, map (reduceToFirst is) subs) : cleanFuture v is ts                            
 
 reduceToFirst :: [Int] -> Int -> Int
 reduceToFirst is i | elem i is = head is
-                   | otherwise = i
+                   | otherwise = i - (length $ filter (i>) (tail is))
 
 subtractOneFromEach :: [RefTerm] -> [RefTerm]
 subtractOneFromEach []                    = []
