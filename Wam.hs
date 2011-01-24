@@ -134,14 +134,14 @@ isRefS _        = False
 -- takes a list of indexes and refterms and returns a 'fixed'
 -- version where everything is in the list before it's referenced
 fixOrder :: [(Int, RefTerm)] -> [(Int, RefTerm)]
-fixOrder x | traceShow ("fixOrder", x) False = undefined
+--fixOrder x | traceShow ("fixOrder", x) False = undefined
 fixOrder [] = []
 fixOrder ts =
     let (bad, good) = partition (\(i,_) -> any (referredTo i) ts) ts
     in  (fixOrder bad) ++ good
     
 referredTo :: Int -> (Int, RefTerm) -> Bool
-referredTo i (_, RefS (_, as)) | traceShow (i, as) False = undefined
+--referredTo i (_, RefS (_, as)) | traceShow (i, as) False = undefined
 referredTo i (_, RefS (_, as)) = elem i as
 referredTo _ _                 = False
 
@@ -193,31 +193,10 @@ putStructure db@(Db {code=code, regs=regs}) (f, args) addr =
         db1   = putCell db addr (STR (CODE h))
     in  db1 { code = code2 }
 
--- So: (write mode)
---     unifyVariable:
---         (A) puts a self-referential REF when we encounter the g in f(g)
---         (B) puts a ref to that self-ref into the register
---     then getStructure:
---         makes a new str (C) and fun at top of CODE
---         encounters the REF (&A)
---         binds it to the str (&C)
---     thus, we end up with:
---         B points to A
---         A points to C
---         C is intact
--- What's not happening:
---     A is not being bound to point at C
---     Whereas, B is being bound
---     THUS, I suspect that deref isn't working
---     In fact, that is the case because we can see the bind call there is erroneous
---     That should be REF CODE 2 (&A)
---     But wait! The value at REGS 2 is (REF REGS 2) when it really should be (REF CODE 2)
---     So something before the deref call is erroneous, look:
-
-
 -- ------------------------ --
 -- PROGRAM TERM COMPILATION --
 -- ------------------------ --
+
 
 compileProgramTerm :: Db -> Term -> Db
 compileProgramTerm db term =
@@ -226,7 +205,7 @@ compileProgramTerm db term =
 -- does the actual compilation of a flattened term
 -- TODO: this has some other responsibilities that it's not doing yet.. hmmm
 compileRefTerm :: (Db, [Int]) -> (Int, RefTerm) -> (Db, [Int])
-compileRefTerm _ i | traceShow ("CompileRefTerm", i) False = undefined
+--compileRefTerm _ i | traceShow ("CompileRefTerm", i) False = undefined
 compileRefTerm (db@Db{regs=(r,_)}, idxs) (i, RefS (f, is)) =
     let db'  = db {regs = (r, i)}
         db'' = getStructure db f (REGS i)
@@ -243,7 +222,7 @@ unifyVarVal (db, idxs) idx | elem idx idxs = (unifyValue db idx, idxs)
 -- (when we've already seen it and compiled it with unifyVariable)
 -- defined on pg 18, fig 2.6
 unifyValue :: Db -> Int -> Db
-unifyValue db@(Db {mode=m}) i | trace ("UNIFYVALUE: " ++ show (m,i)) False = undefined
+--unifyValue db@(Db {mode=m}) i | trace ("UNIFYVALUE: " ++ show (m,i)) False = undefined
 unifyValue db@(Db {mode=READ, s=s}) i = unify db (REGS i) s
 unifyValue db@(Db {code=code, s=s}) i = 
     let code' = pushOnHeap code $ getCell db (REGS i) -- (REF (CODE i))
@@ -253,7 +232,7 @@ unifyValue db@(Db {code=code, s=s}) i =
 -- (when we haven't seen it before)
 -- defined on pg 18, fig 2.6
 unifyVariable :: Db -> Int -> Db
-unifyVariable db@(Db {mode=m}) i | trace ("UNIFYVARIABLE: " ++ show (m, i)) False = undefined
+--unifyVariable db@(Db {mode=m}) i | trace ("UNIFYVARIABLE: " ++ show (m, i)) False = undefined
 unifyVariable db@(Db {mode=READ, s=s}) i =
     let cell = getCell db s
         db'  = putCell db (REGS i) cell
@@ -266,13 +245,13 @@ unifyVariable db@(Db {code=code, s=s, regs=regs}) i =
 -- compiles a program term structure into the heap
 -- defined on pg 18, fig 2.6   
 getStructure :: Db -> Func -> Address -> Db
-getStructure _ f addr | trace ("GETSTRUCTURE: " ++ show f ++ "\t" ++ show addr) False = undefined
+--getStructure _ f addr | trace ("GETSTRUCTURE: " ++ show f ++ "\t" ++ show addr) False = undefined
 getStructure db f addr = getStructure' db f $ getCell db $ deref db addr
 
 
 -- helper for getStructure
 getStructure' :: Db -> Func -> Cell -> Db
-getStructure' _ f c  | trace ("GETSTRUCTURE': " ++ show f ++ "\t" ++ show c) False = undefined
+--getStructure' _ f c  | trace ("GETSTRUCTURE': " ++ show f ++ "\t" ++ show c) False = undefined
 getStructure' db@(Db {code=code, regs=(r,i)}) f (REF addr) =
     let code1 = pushOnHeap code  (STR (CODE (1 + (snd code))))
         code2 = pushOnHeap code1 (FUN f)
@@ -290,7 +269,7 @@ getStructure' db@(Db {code=code}) f (STR addr)
 -- address in the database
 -- defined on pg 17, fig 2.5   
 deref :: Db -> Address -> Address
-deref db adr | trace ("Deref " ++ show adr ++ " => " ++ show cell) False = undefined
+deref db adr -- | trace ("Deref " ++ show adr ++ " => " ++ show cell) False = undefined
              | isSelfRef db cell adr = adr
              | isRef cell            = deref db $ (\(REF x) -> x) cell
              | otherwise             = adr
@@ -300,6 +279,9 @@ deref db adr | trace ("Deref " ++ show adr ++ " => " ++ show cell) False = undef
 isFun :: Cell -> Bool
 isFun (FUN _) = True
 isFun _       = False
+
+isSelfRefA :: Db -> Address -> Bool
+isSelfRefA db a = isSelfRef db (getCell db a) a
 
 isSelfRef :: Db -> Cell -> Address -> Bool
 isSelfRef db (REF x) addr | addr == x = True
@@ -418,9 +400,6 @@ elimDupes = nubBy sameVar
 unify :: Db -> Address -> Address -> Db
 unify db a1 a2 = fromJust $ unify' db [a2, a1] -- use list as a stack, TOS is head
 
-
--- What?
-
 unify' :: Db -> [Address] -> Maybe Db
 unify' _ as | trace ("unify': " ++ show as) False = undefined
 unify' db (a1 : a2 : addrs) =
@@ -452,14 +431,25 @@ unifyFunctors db (STR a, aAddr) (STR b, bAddr) =
        else (Nothing, [])
 
 takeCells :: Db -> Address -> Address -> [Address]
-takeCells _ a1 a2 | trace ("takeCells: " ++ show (a1, a2)) False = undefined
+--takeCells _ a1 a2 | trace ("takeCells: " ++ show (a1, a2)) False = undefined
 takeCells db a1 a2 =
-    case traceShowRet (getCell db a1) of
-        (FUN (_, arity)) -> traceShowRet $ takeCells' db arity (incrAddr a1) (incrAddr a2)
+    case (getCell db a1) of
+        (FUN (_, arity)) -> takeCells' db arity (incrAddr a1) (incrAddr a2)
     where takeCells' _  0 _ _ = []
           takeCells' db x a b = (b : a : takeCells' db (x-1) (incrAddr a) (incrAddr b))
 
 traceShowRet x = traceShow x x
+
+
+
+readProgram :: Db -> Address -> String
+readProgram db addr =
+    case (getCell db addr) of
+        (FUN (f, _))    -> f ++ "(" ++ (intercalate ", " $ map (readProgram db) $ nub $ takeCells db addr addr) ++ ")"
+        (STR addr')     -> readProgram db addr'
+        (REF (CODE a')) -> if isSelfRefA db (CODE a')
+                           then "_" -- (show a')
+                           else readProgram db (deref db (CODE a'))
 
 ------- PARSING --------
 e2m :: Either ParseError a -> Maybe a
