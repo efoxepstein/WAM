@@ -193,6 +193,9 @@ putStructure db@(Db {code=code, regs=regs}) (f, args) addr =
         db1   = putCell db addr (STR (CODE h))
     in  db1 { code = code2 }
 
+
+
+
 -- ------------------------ --
 -- PROGRAM TERM COMPILATION --
 -- ------------------------ --
@@ -397,11 +400,14 @@ elimDupes = nubBy sameVar
 -- UNIFICATION --
 -- ----------- --
 
+-- Takes in a db, the address of a program term, and the address of a query term.
+-- Returns a new db with the program and query term unified.
 unify :: Db -> Address -> Address -> Db
 unify db a1 a2 = fromJust $ unify' db [a2, a1] -- use list as a stack, TOS is head
 
+-- Does most of the actual work of unification. Defined on pg 20, fig 2.7
 unify' :: Db -> [Address] -> Maybe Db
-unify' _ as | trace ("unify': " ++ show as) False = undefined
+-- unify' _ as | trace ("unify': " ++ show as) False = undefined
 unify' db (a1 : a2 : addrs) =
     let (d1, d2)      = (deref db a1, deref db a2)
         (db2, addrs') = unifyTags db d1 d2         -- <-- this does the bulk of the work
@@ -411,21 +417,21 @@ unify' db _ = Just db
 -- If the two addresses point to REFs, then bind the first to the second
 -- Otherwise, they should be REFs that point to FUNs. If not, we're in trouble...
 unifyTags :: Db -> Address -> Address -> (Maybe Db, [Address])
-unifyTags _ _ _ | trace ("unifyTags: ") False = undefined
+-- unifyTags _ _ _ | trace ("unifyTags: ") False = undefined
 unifyTags db a1 a2 | a1 == a2  = (Just db, [])
                    | otherwise =
-    let c1 = trace ("\tCell1: " ++ show (getCell db a1)) (getCell db a1)
-        c2 = trace ("\tCell2: " ++ show (getCell db a2)) (getCell db a2)
+    let c1 = {- trace ("\tCell1: " ++ show (getCell db a1)) -} (getCell db a1)
+        c2 = {- trace ("\tCell2: " ++ show (getCell db a2)) -} (getCell db a2)
     in if (isRef c1) || (isRef c2)
        then (Just (bind db a1 a2), [])
        else unifyFunctors db (c1, a1) (c2, a2)
 
 -- Each cell should be a STR that points to a FUN.
 unifyFunctors :: Db -> (Cell, Address) -> (Cell, Address) -> (Maybe Db, [Address])
-unifyFunctors _ a b | trace ("unifyFunctors: " ++ show a ++ "\t" ++ show b) False = undefined
+-- unifyFunctors _ a b | trace ("unifyFunctors: " ++ show a ++ "\t" ++ show b) False = undefined
 unifyFunctors db (STR a, aAddr) (STR b, bAddr) =
-    let a' = trace ("\tCell1: " ++ show (getCell db a)) (getCell db a)
-        b' = trace ("\tCell2: " ++ show (getCell db b)) (getCell db b)
+    let a' = {- trace ("\tCell1: " ++ show (getCell db a)) -} (getCell db a)
+        b' = {- trace ("\tCell2: " ++ show (getCell db b)) -} (getCell db b)
     in if a' == b'
        then (Just db, takeCells db a b)
        else (Nothing, [])
@@ -494,6 +500,9 @@ textHorn =
        tale  <- textStructure `sepBy` (spaces >> (char ',') >> spaces)
        return (hed :- tale)
        
+
+------ TESTING/RUNNING HELPERS ------
+
 testTerm = p "add(o, X, X)"
 testTerm2 = p "p(f(X), h(Y, f(a)), Y)"
 testQuery = p "p(Z, h(Z, W), f(W))"
@@ -517,3 +526,5 @@ tc4 = unify (testL0 "f(X)" "f(a)") (CODE 0) (CODE 5)
 tc5 = unify (testL0 "f(X,b,Z)" "f(a,Y,c)") (CODE 0) (CODE 11)
 tc6 = unify (testL0 "f(X, g(X))" "f(Y, g(z))") (CODE 0) (CODE 12)
 tc7 = unify (testL0 "p(f(X), h(Y, f(a)), Y)" "p(Z, h(Z, W), f(W))") (CODE 0) (CODE 24)
+tc8 = unify (testL0 "f(X,g(Y,a),Y)" "f(X,X,h(b))") (CODE 0) (CODE 16)
+
